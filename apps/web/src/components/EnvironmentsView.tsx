@@ -17,6 +17,7 @@ import {
   getSecrets,
   createSecret,
 } from '../api/client';
+import { InlineAlert } from './InlineAlert';
 
 export const EnvironmentsView: React.FC = () => {
   const [tab, setTab] = useState<'env' | 'conn' | 'secrets'>('env');
@@ -36,6 +37,7 @@ export const EnvironmentsView: React.FC = () => {
   const [newSecretValue, setNewSecretValue] = useState('');
 
   const [testResult, setTestResult] = useState<any>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     loadAll();
@@ -47,7 +49,9 @@ export const EnvironmentsView: React.FC = () => {
       setEnvironments(e);
       setConnections(c);
       setSecrets(s);
-    } catch (_) {}
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to load environments and credentials.');
+    }
   };
 
   const handleCreateEnv = async (e: React.FormEvent) => {
@@ -60,8 +64,8 @@ export const EnvironmentsView: React.FC = () => {
       });
       setNewEnvName('');
       loadAll();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to create the environment.');
     }
   };
 
@@ -76,8 +80,8 @@ export const EnvironmentsView: React.FC = () => {
       });
       setNewConnName('');
       loadAll();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to create the connection profile.');
     }
   };
 
@@ -86,8 +90,8 @@ export const EnvironmentsView: React.FC = () => {
       const res = await testConnection(id);
       setTestResult(res);
       setTimeout(() => setTestResult(null), 4000);
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to test this connection.');
     }
   };
 
@@ -102,8 +106,8 @@ export const EnvironmentsView: React.FC = () => {
       setNewSecretName('');
       setNewSecretValue('');
       loadAll();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to save the secret.');
     }
   };
 
@@ -147,6 +151,8 @@ export const EnvironmentsView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {errorMessage && <InlineAlert message={errorMessage} onDismiss={() => setErrorMessage(null)} className="mb-6" />}
 
       {testResult && (
         <div className="p-3 mb-6 bg-emerald-950/40 border border-emerald-800 rounded-lg flex items-center justify-between text-xs text-emerald-300">

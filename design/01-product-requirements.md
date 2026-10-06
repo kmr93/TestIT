@@ -46,7 +46,7 @@ Permissions apply at workspace and environment levels. A run uses the permission
 - Live suite progress, case/step status, run counters, timings, API latency summaries, and recent sanitized events.
 - NATS Core event transport between backend components and an authenticated Rust SSE gateway; durable run events and snapshots remain in SQLite.
 - Compare a completed run with the most recent successful run of the same suite revision and environment.
-- Responsive full-feature authoring, execution, and reporting on desktop, tablet, and mobile, with an accessible list-based editor for narrow screens.
+- Full-feature authoring, execution, and reporting in desktop browsers at a minimum viewport of 1280 × 720. Mobile and tablet support are out of scope.
 - SMTP configuration and completion email.
 - Trigger API, signed webhook trigger, CI command-line client, import/export UI.
 - One-host Docker Compose deployment.
@@ -110,7 +110,7 @@ Permissions apply at workspace and environment levels. A run uses the permission
 - FR-20: Display live progress and statistics for active runs, reconnect from the last durable event, and show an explicit estimate label for any estimated completion time.
 - FR-21: Publish live run-stat snapshots through private NATS Core subjects and forward them to authorized browser clients over SSE; refresh from SQLite snapshots on reconnect or broker failure.
 - FR-22: Compare a completed run to the most recent prior PASS with the same suite revision and environment, showing status and duration/latency deltas without comparing sensitive payloads.
-- FR-23: Maintain full workflow functionality on mobile through responsive layouts and a keyboard/touch-accessible list editor.
+- FR-23: Maintain full workflow functionality on supported desktop viewports through a keyboard-accessible editor. The minimum supported viewport is 1280 × 720.
 
 ## 6. Non-functional targets
 
@@ -121,7 +121,7 @@ Initial targets are launch defaults, not a benchmark guarantee:
 - API reads under 500 ms p95 for ordinary suite/report metadata under a 50-user internal workload.
 - Run event/report view updates within 2 seconds for active runs. Progress counts are exact; remaining-time estimates appear only when enough comparable history exists and are labeled estimates.
 - Backend-to-UI status/stat updates target 2 seconds under the configured single-host concurrency. NATS Core is ephemeral; the transactional SQLite state remains authoritative.
-- Responsive layouts support desktop, tablet, and narrow mobile viewports; no authoring action is available only through pointer drag-and-drop.
+- The product UI targets desktop viewports of at least 1280 × 720. No authoring action is available only through pointer drag-and-drop.
 - No silent data loss acknowledged by the application; SQLite transactions and scheduled backups are required.
 - Every worker invocation has CPU, memory, process-count, output-size, and wall-clock limits.
 - Each connector documents supported server versions and is validated in CI.
@@ -133,7 +133,7 @@ Initial targets are launch defaults, not a benchmark guarantee:
 - A failed run identifies the failed step and distinguishes assertion failure, infrastructure error, timeout, cancellation, and interruption.
 - A running suite view updates within 2 seconds and shows completed/total cases and steps, status counts, elapsed time, active work, and safe latency summaries.
 - An author can build a request from custom and built-in variables, preview the resolved request without sending it, and verify secrets are masked.
-- Mobile users can create, configure, connect, validate, and publish workflows using the list editor and touch controls.
+- Desktop users can create, configure, connect, validate, and publish workflows using the visual editor and keyboard-accessible controls.
 - A completed run shows an eligible baseline and highlights status/timing/latency changes, or explains why no baseline exists.
 - Backup restore and suite-bundle import complete with a preview and a recoverable rollback point.
 - No secret value appears in UI responses, email, logs, bundle exports, or report HTML.

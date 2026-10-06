@@ -4,7 +4,6 @@ import {
   FileCode,
   PlayCircle,
   Database,
-  FileCheck2,
   Sliders,
   Sparkles,
 } from 'lucide-react';
@@ -32,7 +31,7 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
           </div>
           <div>
             <h1 className="font-bold text-lg text-slate-100 tracking-tight">TestIT</h1>
-            <p className="text-xs text-indigo-400 font-mono">v0.1.0 • Fail-Proof</p>
+            <p className="text-[10px] text-indigo-300/80 font-semibold uppercase tracking-[0.16em]">Automation workspace</p>
           </div>
         </div>
 
@@ -60,10 +59,10 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
 
       <div className="p-3 bg-slate-950/60 border border-slate-800/80 rounded-xl">
         <div className="flex items-center gap-2 mb-1.5">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span className="text-xs font-semibold text-slate-300">Default Workspace</span>
+          <span className="w-2 h-2 rounded-full bg-indigo-400"></span>
+          <span className="text-xs font-semibold text-slate-300">Desktop workspace</span>
         </div>
-        <p className="text-[11px] text-slate-500">Storage: SQLite WAL • NATS Ephemeral</p>
+        <p className="text-[11px] text-slate-500">Backend test suites and run reports</p>
       </div>
     </nav>
   );

@@ -72,7 +72,12 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose }
     } catch (_) {}
   };
 
-  const percent = snapshot?.progress?.percent ?? (status === 'PASSED' ? 100 : 25);
+  const snapshotPercent = snapshot?.progress?.percent;
+  const percent = Number.isFinite(snapshotPercent)
+    ? Math.max(0, Math.min(100, Number(snapshotPercent)))
+    : status === 'PASSED'
+      ? 100
+      : null;
 
   return (
     <div className="glass-panel p-6 bg-slate-900 border border-slate-700 rounded-xl space-y-6">
@@ -141,12 +146,14 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose }
       <div>
         <div className="flex justify-between text-xs font-medium text-slate-300 mb-2">
           <span>Overall Workflow Progress</span>
-          <span className="font-mono font-bold text-indigo-400">{percent}%</span>
+          <span className="font-mono font-bold text-indigo-400">
+            {percent === null ? 'Unavailable' : `${percent}%`}
+          </span>
         </div>
         <div className="w-full bg-slate-950 h-3 rounded-full overflow-hidden border border-slate-800">
           <div
             className="h-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all duration-500 rounded-full"
-            style={{ width: `${percent}%` }}
+            style={{ width: `${percent ?? 0}%` }}
           />
         </div>
       </div>

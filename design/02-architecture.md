@@ -4,7 +4,7 @@
 
 The control plane and data plane are separated. The Rust service owns identity, authoring, versioning, scheduling, durable run state, reports, secrets, and worker lifecycle. Short-lived workers perform a single bounded node invocation.
 
-    Responsive Browser UI (React + TypeScript + React Flow/list editor)
+    Desktop Browser UI (React + TypeScript + React Flow)
           | HTTPS REST + authenticated Server-Sent Events
           v
     Rust control plane (Axum + Tokio)
@@ -41,7 +41,7 @@ The UI does not connect to target systems. It sends typed definitions to the API
 - Generates typed REST requests from a versioned schema.
 - Uses Server-Sent Events for run status and falls back to polling.
 - Connects only to the Rust API; no NATS credentials or broker socket reach the browser.
-- Provides responsive canvas and list-based workflow editing at desktop, tablet, and mobile sizes.
+- Provides a desktop canvas editor for supported browser viewports of at least 1280 × 720. Mobile and tablet layouts are not supported targets.
 - Provides variable picker, formula/function picker, no-network variable preview, and run comparison.
 - Never stores secret plaintext in browser local storage; secret entry fields clear after save.
 

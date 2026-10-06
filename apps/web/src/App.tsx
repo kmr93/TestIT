@@ -24,7 +24,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="flex min-h-screen bg-slate-950 text-slate-100">
+    <div className="app-shell flex min-h-screen bg-slate-950 text-slate-100">
       {/* Sidebar Navigation */}
       <Navigation activeTab={activeTab} setActiveTab={handleTabChange} />
 

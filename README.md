@@ -1,39 +1,31 @@
 # TestIT — Backend Automation Suite Builder
 
-TestIT is an enterprise-grade backend automation testing platform designed for deterministic, fail-proof execution across HTTP APIs, relational databases (MySQL, MariaDB), NoSQL databases (Cassandra, MongoDB), and tabular data files (Parquet, Delta Lake).
+TestIT is an early prototype for authoring backend test workflows across HTTP APIs, relational databases (MySQL, MariaDB), NoSQL databases (Cassandra, MongoDB), and tabular data files (Parquet, Delta Lake).
 
-Built in strict compliance with the architecture pack in `design/`.
+The repository includes a Rust control plane, React desktop UI, and Python worker adapters. It is not production-ready: authentication/RBAC and worker dispatch are incomplete, and run statuses must not be treated as evidence that checks executed. See [PROJECT_REVIEW.md](PROJECT_REVIEW.md) for the implementation review against `design/`.
 
 ---
 
-## 🏗️ Architecture & Component Overview
+## 🏗️ Current component map
 
 ```
-                      +---------------------------------------+
-                      |       Responsive Web UI               |
-                      |   (React + TypeScript + Vite)         |
-                      +-------------------+-------------------+
-                                          |
-                      +-------------------v-------------------+
-                      |      Rust Control Plane (Axum)        |
-                      |  - SQLite (WAL mode & Outbox)         |
-                      |  - AES-256-GCM Secret Encryption      |
-                      |  - Deterministic Variable Evaluator   |
-                      |  - SSE Real-time Progress Gateway     |
-                      +---------+-------------------+---------+
-                                |                   |
-        +-----------------------v----+        +-----v----------------------+
-        |      Private NATS Core     |        |    Isolated Python Worker  |
-        |  - Ephemeral stats fan-out |        |  - Playwright APIRequest   |
-        |  - Internal Docker network |        |  - MySQL, Mongo, Parquet   |
-        +----------------------------+        +----------------------------+
+  Desktop web UI (React + TypeScript + Vite)
+                     |
+        Rust control plane (Axum + SQLite)
+             /                       \
+  NATS config/outbox code       Python worker adapters
+  (SSE still polls SQLite)      (not called by orchestrator)
 ```
+
+This map describes code present in the repository. The NATS-to-SSE and control-plane-to-worker paths are not yet integrated end to end.
 
 ---
 
 ## 🚀 Quickstart with Docker (Primary Setup)
 
-Docker Compose is the primary deployment target. It brings up the private NATS Core message bus, the Rust Control Plane, and the Web UI in isolated networks.
+Docker Compose is the development deployment target. It starts NATS, the Rust control plane, and the web UI; it does not currently prove end-to-end worker execution.
+
+Before the first launch, set `MASTER_KEY_HEX` to a unique 64-character hex key in your shell or ignored `.env` file. Keep the key backed up securely; losing it makes stored secrets unreadable. Compose now refuses to start without this value.
 
 ### 1. Launch the Stack
 
@@ -70,7 +62,7 @@ cargo run
 ### Web UI
 ```bash
 cd apps/web
-npm install
+npm ci
 npm run build
 npm run dev
 ```
@@ -83,12 +75,12 @@ cargo run -- --server http://localhost:8080 run --suite <suite_revision_id> --en
 
 ---
 
-## 🛡️ Fail-Proof Safeguards
+## Current implementation
 
-- **Transactional Outbox & SQLite WAL:** Atomic status updates and outbox commits. Dropped NATS events never corrupt durable state.
-- **Worker Crash Resilience:** Ephemeral workers emit versioned NDJSON frames. Unhandled crashes emit error envelopes preventing coordinator hangs.
-- **Zero-Network Variable Preview:** Deterministic resolution of variables without hitting external endpoints or resolving live secrets.
-- **Role-Based Encrypted Secrets:** Credentials encrypted at rest with AES-256-GCM using an external master key. Never emitted in browser storage or SSE logs.
+- The UI supports desktop browsers from 1280 × 720 and uses a keyboard-operable ordered-step editor. Graph editing is not implemented.
+- The Python worker contains a versioned protocol and connector adapters, but the Rust orchestrator does not call it yet.
+- Variable preview and AES-256-GCM secret encryption code exist. Authentication, authorization, and key rotation are not implemented.
+- HTML, JUnit, and CSV report endpoints exist; report and event-stream acceptance has not been verified end to end.
 
 ---
 

@@ -3,7 +3,6 @@
 services/control-plane/target/
 apps/cli/target/
 **/*.rs.bk
-Cargo.lock
 
 # Node / Web
 node_modules/

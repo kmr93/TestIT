@@ -20,12 +20,11 @@ impl AppConfig {
         let database_url = env::var("DATABASE_URL")
             .unwrap_or_else(|_| "sqlite://data/db/testit.sqlite?mode=rwc".to_string());
 
-        let nats_url = env::var("NATS_URL")
-            .unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
+        let nats_url = env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
 
-        let master_key_hex = env::var("MASTER_KEY_HEX").unwrap_or_else(|_| {
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string()
-        });
+        let master_key_hex = env::var("MASTER_KEY_HEX").map_err(|_| {
+            anyhow::anyhow!("MASTER_KEY_HEX must be set to a unique 64-character key")
+        })?;
 
         let key_bytes = hex::decode(&master_key_hex)?;
         if key_bytes.len() != 32 {
@@ -34,11 +33,11 @@ impl AppConfig {
         let mut master_key = [0u8; 32];
         master_key.copy_from_slice(&key_bytes);
 
-        let artifacts_dir = env::var("ARTIFACTS_DIR")
-            .unwrap_or_else(|_| "./data/artifacts".to_string());
+        let artifacts_dir =
+            env::var("ARTIFACTS_DIR").unwrap_or_else(|_| "./data/artifacts".to_string());
 
-        let docker_worker_image = env::var("DOCKER_WORKER_IMAGE")
-            .unwrap_or_else(|_| "testit-worker:latest".to_string());
+        let docker_worker_image =
+            env::var("DOCKER_WORKER_IMAGE").unwrap_or_else(|_| "testit-worker:latest".to_string());
 
         let max_active_cases = env::var("MAX_ACTIVE_CASES")
             .unwrap_or_else(|_| "4".to_string())

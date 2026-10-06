@@ -29,7 +29,7 @@ services:
       - DATABASE_URL=sqlite:///data/db/testit.sqlite?mode=rwc
       - NATS_URL=nats://nats:4222
       - ARTIFACTS_DIR=/data/artifacts
-      - MASTER_KEY_HEX=${MASTER_KEY_HEX:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      - MASTER_KEY_HEX=${MASTER_KEY_HEX:?Set MASTER_KEY_HEX to a unique 64-character hex key before starting TestIT}
       - DOCKER_WORKER_IMAGE=${DOCKER_WORKER_IMAGE:-testit-worker:latest}
       - HOST_ARTIFACTS_PATH=${HOST_ARTIFACTS_PATH:-./data/artifacts}
       - WORKER_NETWORK=testit-worker-net

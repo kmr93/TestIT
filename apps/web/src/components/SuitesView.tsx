@@ -7,9 +7,6 @@ import {
   Eye,
   CheckCircle2,
   FolderGit2,
-  Smartphone,
-  Monitor,
-  AlertCircle,
 } from 'lucide-react';
 import {
   getAssets,
@@ -22,8 +19,8 @@ import {
 } from '../api/client';
 import { Asset, NodeInstance } from '../types';
 import { WorkflowCanvas } from './WorkflowCanvas';
-import { MobileListEditor } from './MobileListEditor';
 import { VariablePreviewModal } from './VariablePreviewModal';
+import { InlineAlert } from './InlineAlert';
 
 interface SuitesViewProps {
   onRunStarted: (runId: string) => void;
@@ -34,10 +31,14 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [nodes, setNodes] = useState<NodeInstance[]>([]);
   const [selectedNode, setSelectedNode] = useState<NodeInstance | null>(null);
-  const [isMobileMode, setIsMobileMode] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [newAssetName, setNewAssetName] = useState('');
+  const [isCreatingAsset, setIsCreatingAsset] = useState(false);
   const [environments, setEnvironments] = useState<any[]>([]);
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState('');
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     loadAssets();
@@ -48,17 +49,25 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
     try {
       const data = await getAssets();
       setAssets(data);
+      setSelectedAsset((current) =>
+        current ? data.find((asset) => asset.id === current.id) ?? current : current
+      );
       if (data.length > 0 && !selectedAsset) {
         selectAsset(data[0]);
       }
-    } catch (_) {}
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to load test suites.');
+    }
   };
 
   const loadEnvironments = async () => {
     try {
       const envs = await getEnvironments();
       setEnvironments(envs);
-    } catch (_) {}
+      setSelectedEnvironmentId((current) => current || envs[0]?.id || '');
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to load environments.');
+    }
   };
 
   const selectAsset = async (asset: Asset) => {
@@ -72,12 +81,23 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
       } else {
         setSelectedNode(null);
       }
-    } catch (_) {}
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to load this draft.');
+    }
   };
 
-  const handleCreateAsset = async () => {
-    const name = prompt('Enter Test Case or Suite Name:');
+  const handleCreateAsset = () => {
+    setErrorMessage(null);
+    setNewAssetName('');
+    setShowCreateDialog(true);
+  };
+
+  const submitCreateAsset = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = newAssetName.trim();
     if (!name) return;
+    setIsCreatingAsset(true);
+    setErrorMessage(null);
     try {
       const created = await createAsset({
         kind: 'case',
@@ -98,10 +118,13 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
           edges: [],
         },
       });
-      await loadAssets();
       selectAsset(created);
-    } catch (err: any) {
-      alert(err.message);
+      setAssets((current) => [created, ...current.filter((asset) => asset.id !== created.id)]);
+      setShowCreateDialog(false);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to create the test case.');
+    } finally {
+      setIsCreatingAsset(false);
     }
   };
 
@@ -115,8 +138,8 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
       setStatusMsg('Draft saved successfully');
       setTimeout(() => setStatusMsg(null), 3000);
       loadAssets();
-    } catch (err: any) {
-      alert(`Save failed: ${err.message}`);
+    } catch (err) {
+      setErrorMessage(`Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
@@ -130,13 +153,13 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
       setStatusMsg(`Published Revision v${res.version} (Checksum: ${res.checksum.slice(0, 8)}...)`);
       setTimeout(() => setStatusMsg(null), 4000);
       loadAssets();
-    } catch (err: any) {
-      alert(`Publish failed: ${err.message}`);
+    } catch (err) {
+      setErrorMessage(`Publish failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
   const handleTriggerRun = async () => {
-    if (!selectedAsset) return;
+    if (!selectedAsset || selectedAsset.kind !== 'suite' || !selectedEnvironmentId) return;
     try {
       // First ensure draft is published or publish revision
       const pub = await publishAssetRevision(selectedAsset.id, {
@@ -144,15 +167,14 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
         change_note: 'Automated publish before run',
       });
 
-      const envId = environments[0]?.id || '00000000-0000-0000-0000-000000000001';
       const runRes = await triggerRun({
         suite_revision_id: pub.revision_id,
-        environment_id: envId,
+        environment_id: selectedEnvironmentId,
       });
 
       onRunStarted(runRes.run_id);
-    } catch (err: any) {
-      alert(`Run failed: ${err.message}`);
+    } catch (err) {
+      setErrorMessage(`Run failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
@@ -189,29 +211,25 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
             </span>
           )}
 
-          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 mr-2">
-            <button
-              onClick={() => setIsMobileMode(false)}
-              className={`p-1.5 rounded text-xs flex items-center gap-1 ${
-                !isMobileMode ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Canvas view (Desktop/Tablet)"
+          <label className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Environment
+            <select
+              aria-label="Run environment"
+              value={selectedEnvironmentId}
+              onChange={(event) => setSelectedEnvironmentId(event.target.value)}
+              disabled={environments.length === 0}
+              className="input-field w-40 py-2 text-xs normal-case tracking-normal"
             >
-              <Monitor className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => setIsMobileMode(true)}
-              className={`p-1.5 rounded text-xs flex items-center gap-1 ${
-                isMobileMode ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Touch-friendly list view (Mobile)"
-            >
-              <Smartphone className="w-3.5 h-3.5" />
-            </button>
-          </div>
+              <option value="">Choose environment</option>
+              {environments.map((environment) => (
+                <option key={environment.id} value={environment.id}>{environment.name}</option>
+              ))}
+            </select>
+          </label>
 
           <button
             onClick={() => setShowPreviewModal(true)}
+            disabled={!selectedNode}
             className="btn btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
           >
             <Eye className="w-3.5 h-3.5 text-indigo-400" />
@@ -219,6 +237,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
           </button>
           <button
             onClick={handleSaveDraft}
+            disabled={!selectedAsset}
             className="btn btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
           >
             <Save className="w-3.5 h-3.5" />
@@ -226,6 +245,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
           </button>
           <button
             onClick={handlePublish}
+            disabled={!selectedAsset}
             className="btn btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
           >
             <Send className="w-3.5 h-3.5 text-violet-400" />
@@ -233,6 +253,8 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
           </button>
           <button
             onClick={handleTriggerRun}
+            disabled={!selectedAsset || selectedAsset.kind !== 'suite' || !selectedEnvironmentId}
+            title={selectedAsset?.kind !== 'suite' ? 'Only suite assets can be run.' : undefined}
             className="btn btn-primary text-xs py-1.5 px-3 flex items-center gap-1.5"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
@@ -240,6 +262,10 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
           </button>
         </div>
       </div>
+
+      {errorMessage && (
+        <InlineAlert message={errorMessage} onDismiss={() => setErrorMessage(null)} className="mx-6 mt-3" />
+      )}
 
       {/* Main Workspace Layout */}
       <div className="flex-1 flex overflow-hidden p-6 gap-6">
@@ -252,6 +278,8 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
               </span>
               <button
                 onClick={handleCreateAsset}
+                aria-label="Create test case"
+                title="Create test case"
                 className="p-1 rounded-lg bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600 hover:text-white"
               >
                 <Plus className="w-4 h-4" />
@@ -259,10 +287,23 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
             </div>
 
             <div className="space-y-1.5 max-h-[70vh] overflow-y-auto pr-1">
+              {assets.length === 0 && (
+                <p className="rounded-lg border border-dashed border-slate-700/80 px-3 py-4 text-xs leading-5 text-slate-500">
+                  Your workspace is ready. Create a test case to start building a workflow.
+                </p>
+              )}
               {assets.map((asset) => (
                 <div
                   key={asset.id}
                   onClick={() => selectAsset(asset)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      selectAsset(asset);
+                    }
+                  }}
                   className={`p-2.5 rounded-lg border text-xs cursor-pointer transition-all ${
                     selectedAsset?.id === asset.id
                       ? 'bg-indigo-950/40 border-indigo-500/50 text-indigo-200'
@@ -280,21 +321,27 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
           </div>
         </div>
 
-        {/* Center: Canvas or Mobile List */}
+        {/* Center: ordered workflow editor */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {isMobileMode ? (
-            <MobileListEditor
-              nodes={nodes}
-              onChange={setNodes}
-              onEditNode={(n) => setSelectedNode(n)}
-            />
-          ) : (
+          {selectedAsset ? (
             <WorkflowCanvas
               nodes={nodes}
               onChange={setNodes}
               onSelectNode={(n) => setSelectedNode(n)}
               selectedNodeId={selectedNode?.id || null}
             />
+          ) : (
+            <section className="glass-panel flex flex-1 flex-col items-center justify-center px-10 text-center">
+              <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-indigo-400/20 bg-indigo-400/10 text-indigo-300 shadow-glow">
+                <FolderGit2 className="h-6 w-6" />
+              </div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-indigo-300">Start with a test case</p>
+              <h3 className="max-w-lg text-2xl font-semibold tracking-tight text-slate-100">Turn a backend check into a repeatable workflow.</h3>
+              <p className="mt-3 max-w-md text-sm leading-6 text-slate-400">Create a case, add API and data checks, then publish a version for a run.</p>
+              <button onClick={handleCreateAsset} className="btn btn-primary mt-6 px-4 py-2.5">
+                <Plus className="h-4 w-4" /> Create test case
+              </button>
+            </section>
           )}
         </div>
 
@@ -392,6 +439,42 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted }) => {
           </div>
         )}
       </div>
+
+      {showCreateDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm">
+          <section role="dialog" aria-modal="true" aria-labelledby="create-test-case-title" className="glass-panel w-full max-w-lg p-6 shadow-2xl">
+            <div className="mb-5 flex items-start justify-between">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-300">New workflow</p>
+                <h2 id="create-test-case-title" className="mt-1 text-lg font-semibold text-slate-100">Create a test case</h2>
+                <p className="mt-1 text-sm text-slate-400">Give this backend check a clear, reusable name.</p>
+              </div>
+              <button onClick={() => setShowCreateDialog(false)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="Close dialog">
+                <span aria-hidden="true">×</span>
+              </button>
+            </div>
+            <form onSubmit={submitCreateAsset}>
+              <label htmlFor="new-test-case-name" className="mb-1.5 block text-xs font-semibold text-slate-300">Test case name</label>
+              <input
+                id="new-test-case-name"
+                autoFocus
+                value={newAssetName}
+                onChange={(event) => setNewAssetName(event.target.value)}
+                className="input-field"
+                placeholder="e.g. Customer API health check"
+                maxLength={120}
+                required
+              />
+              <div className="mt-5 flex justify-end gap-2">
+                <button type="button" onClick={() => setShowCreateDialog(false)} className="btn btn-secondary">Cancel</button>
+                <button type="submit" disabled={isCreatingAsset || !newAssetName.trim()} className="btn btn-primary">
+                  {isCreatingAsset ? 'Creating…' : 'Create test case'}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
 
       {showPreviewModal && selectedNode && (
         <VariablePreviewModal

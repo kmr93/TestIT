@@ -116,14 +116,13 @@ Import wizard:
 
 ## 7. Accessibility and usability
 
-### Responsive behavior and design system
+### Desktop layout and design system
 
-- Desktop (wide screens): three-pane editor with node catalog, canvas, and properties panel.
-- Tablet: canvas remains primary; catalog and properties open as resizable drawers/tabs.
-- Mobile/narrow screens: provide the complete authoring workflow using an ordered list editor. Nodes are cards; users add, configure, reorder, and connect nodes through explicit menus and “connect to” controls. Branches use nested if/then cards. A large canvas is optional and never the only way to edit a suite.
-- Run dashboards, reports, import/export, connection forms, and admin actions adapt to one-column layouts; wide tables become labeled cards or horizontally scrollable data regions.
-- Use responsive typography, consistent spacing, semantic color tokens, and visible text labels for statuses. Preserve contrast in light/dark modes if both are offered.
-- Touch targets are at least 44 by 44 CSS pixels for primary mobile actions. Avoid hover-only menus; preserve keyboard operations at every breakpoint.
+- The supported browser viewport is at least 1280 × 720. Mobile and tablet support are out of scope.
+- Use a three-pane editor with node catalog, canvas, and properties panel. Preserve a usable desktop workspace when panels or run details open.
+- Run dashboards, reports, import/export, connection forms, and admin actions use desktop layouts; wide data tables may scroll within their panel.
+- Use consistent typography, spacing, semantic color tokens, and visible text labels for statuses. Preserve contrast in light/dark modes if both are offered.
+- Preserve keyboard operations and visible focus on every desktop workflow. Do not make any authoring action available only through pointer drag-and-drop.
 
 - Keep the visual system consistent: one spacing scale, form controls, buttons, status badges, alert patterns, loading skeletons, empty states, and destructive-action confirmation.
 - Provide clear loading, validation, stale-data, offline, permission-denied, and recoverable-error states. Never make color the only signal for pass/fail/error.

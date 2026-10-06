@@ -2,7 +2,7 @@
 
 Version 1.2 · 7 October 2026
 
-This pack turns the brief into an implementable, Rust-first design for a backend automation platform. It covers requirements, architecture, node behavior, persistence and portability, APIs, security, UI flows, deployment, delivery, and acceptance criteria. It also includes data-driven cases, setup/cleanup hooks, condition polling, OpenAPI-assisted authoring, safe built-in variable functions, variable preview, run comparison, CI command-line use, responsive editing, and NATS-backed live run statistics.
+This pack turns the brief into an implementable, Rust-first design for a backend automation platform. It covers requirements, architecture, node behavior, persistence and portability, APIs, security, UI flows, deployment, delivery, and acceptance criteria. It also includes data-driven cases, setup/cleanup hooks, condition polling, OpenAPI-assisted authoring, safe built-in variable functions, variable preview, run comparison, CI command-line use, desktop-only editing, and NATS-backed live run statistics.
 
 ## Recommended product shape
 
@@ -11,7 +11,7 @@ Build a single-host web application with a Rust control plane and a typed, visua
 Recommended stack:
 
 - Control plane: Rust, Axum, Tokio, SQLx, SQLite.
-- Web UI: React + TypeScript + React Flow with responsive desktop, tablet, and mobile authoring. React Flow supplies the interactive node/edge canvas; see its [component documentation](https://reactflow.dev/api-reference/react-flow). Mobile also gets a touch-friendly list editor for full feature coverage.
+- Web UI: React + TypeScript + React Flow, designed for desktop browsers with a minimum supported viewport of 1280 × 720. React Flow supplies the interactive node/edge canvas; see its [component documentation](https://reactflow.dev/api-reference/react-flow). Mobile and tablet authoring are out of scope.
 - Execution: short-lived, isolated Python worker containers; pinned Python and dependency image versions.
 - Playwright: Python APIRequestContext for HTTP API nodes. Do not launch a browser in v1.
 - Variables: typed custom values plus a versioned allow-list of built-in functions, resolved by the Rust control plane and previewable without sending requests.
@@ -23,7 +23,7 @@ Recommended stack:
 - Deployment: one Linux Docker Compose host for v1, including a private NATS Core service with no published client port. Windows development can use Docker Desktop with Linux containers.
 - External data: Python adapters for MySQL/MariaDB, Cassandra, MongoDB, Delta Lake and Parquet; local filesystem and S3-compatible storage first.
 
-Rust is a good fit for the durable API, orchestration, variable evaluation, storage, NATS integration, and security boundaries. React/TypeScript is the recommended responsive browser UI because the visual editor depends on mature canvas components and a broad UI ecosystem. Python is an intentional worker language because the brief explicitly requires Python scripts and Playwright Python, and it offers a unified connector surface. Delta Lake's delta-rs implementation itself is Rust-based.
+Rust is a good fit for the durable API, orchestration, variable evaluation, storage, NATS integration, and security boundaries. React/TypeScript is the recommended desktop browser UI because the visual editor depends on mature canvas components and a broad UI ecosystem. Python is an intentional worker language because the brief explicitly requires Python scripts and Playwright Python, and it offers a unified connector surface. Delta Lake's delta-rs implementation itself is Rust-based.
 
 A “fail-proof” system cannot be guaranteed when it calls external services, databases, scripts, email servers, or storage. The design instead aims for bounded failures, durable run state, clear failure classification, safe recovery, and no silent success.
 
@@ -34,7 +34,7 @@ A “fail-proof” system cannot be guaranteed when it calls external services, 
 | 1 | v1 is backend-only: APIs, scripts, database checks, and data files. No browser UI tests. Prioritize no-code authoring for normal users; retain an admin-managed library of versioned scripts for advanced cases. |
 | 2 | Start on one Docker host. Cap at 4 active test cases across the host; queue additional runs. Suite cases run sequentially by default, with a setting for independent cases to run in parallel. Use environment/resource locks for suites that mutate shared test data. |
 | 3 | Use Playwright's Python APIRequestContext for API calls. Do not start a browser in v1. No Node Playwright service is needed. |
-| 4 | Use Rust for the API/control plane and React + TypeScript + React Flow for the visual UI. The UI is responsive across desktop/tablet/mobile; mobile gets a touch-friendly list editor for full workflow editing plus run/report views. |
+| 4 | Use Rust for the API/control plane and React + TypeScript + React Flow for the desktop visual UI. The supported browser viewport starts at 1280 × 720; mobile and tablet authoring are out of scope. |
 | 5 | Keep suite definitions and run state in a SQLite file on the same host. Provide UI export/import as a validated portable bundle. Default retention: configurations indefinitely, run summaries 90 days, detailed logs/artifacts 30 days, with a 20 GiB artifact quota configurable by the administrator. |
 | 6 | Configure named connections in the UI. Store credentials encrypted at rest with an encryption key held outside SQLite. Use role-based access for credential use and administration. |
 | 7 | Run shell/Python assets in short-lived containers with resource, time, filesystem, and network limits. Never fall back to host execution. Pin Python/runtime images; no per-run package installation. |
@@ -45,7 +45,7 @@ A “fail-proof” system cannot be guaranteed when it calls external services, 
 | 12 | Include authenticated API triggers, signed webhooks, and a small CI command-line client in v1. Add built-in cron scheduling after the execution and recovery model has proven stable. |
 | 13 | Keep structured application and run logs for 30 days by default, run summaries for 90 days, expose health plus Prometheus-compatible metrics, and stream live run counters/timings through a private NATS Core service to the Rust SSE gateway. SQLite stores durable snapshots/events; JetStream is not required for v1. |
 | 14 | No formal compliance requirements were supplied. Apply encryption in transit, encrypted secrets, audit history, least privilege, and configurable retention by default. |
-| 15 | Deliver all documents in this pack. No calendar MVP date was supplied; estimate 18–22 weeks for a three-engineer team with part-time QA/DevOps, subject to connector, NATS, responsive UI, and security validation. |
+| 15 | Deliver all documents in this pack. No calendar MVP date was supplied; estimate 18–22 weeks for a three-engineer team with part-time QA/DevOps, subject to connector, NATS, desktop UI, and security validation. |
 
 ## Documents
 

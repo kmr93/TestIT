@@ -9,8 +9,6 @@ import {
   Trash2,
   Settings2,
   CheckCircle2,
-  Smartphone,
-  Monitor,
 } from 'lucide-react';
 import { NodeInstance } from '../types';
 

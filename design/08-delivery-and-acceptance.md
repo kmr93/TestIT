@@ -2,7 +2,7 @@
 
 ## 1. Delivery estimate
 
-No MVP date was supplied. With the added typed variable/function system, responsive full mobile authoring, variable preview, run comparison, private NATS Core service, data-driven execution, OpenAPI import, wait-until behavior, CI CLI, and environment locks, a realistic first release is 18–22 calendar weeks with two backend engineers (Rust control plane and Python execution/connectors), one frontend engineer, and part-time QA/DevOps/security support. A single engineer should budget approximately 8–11 months depending on connector and deployment experience.
+No MVP date was supplied. With the added typed variable/function system, desktop authoring, variable preview, run comparison, private NATS Core service, data-driven execution, OpenAPI import, wait-until behavior, CI CLI, and environment locks, a realistic first release is 18–22 calendar weeks with two backend engineers (Rust control plane and Python execution/connectors), one frontend engineer, and part-time QA/DevOps/security support. A single engineer should budget approximately 8–11 months depending on connector and deployment experience.
 
 The estimate assumes the host is a single Linux Docker Compose installation and that connector acceptance is limited to a declared, tested server/version matrix.
 
@@ -12,12 +12,12 @@ The estimate assumes the host is a single Linux Docker Compose installation and 
 |---|---|---|
 | 1–2 | Product/technical foundation | ADRs, workflow JSON schema, threat model, CI skeleton, connector support matrix |
 | 3–4 | Control plane and storage | Rust service, auth/RBAC, SQLite migrations, asset drafts/revisions, audit |
-| 5–7 | Authoring foundation | Responsive desktop/tablet/mobile editor shell, typed variables, built-in function catalog, request variable picker/preview, APIRequestContext worker, OpenAPI import preview |
+| 5–7 | Authoring foundation | Desktop editor shell (minimum 1280 × 720), typed variables, built-in function catalog, request variable picker/preview, APIRequestContext worker, OpenAPI import preview |
 | 8–11 | Runtime and connectors | Deterministic variable resolver, auth profiles, CSV/JSON iterations, setup/cleanup, wait-until, locks, script assets, DB/data connectors |
 | 12–14 | Live events and reporting | Private NATS Core + SQLite outbox/snapshots, SSE gateway/reconnect, live stats, run comparison, HTML/JUnit/CSV, SMTP, CI CLI |
 | 15–17 | Import/export and admin | Validated bundle flow, connections/secrets UI, backup/restore, retention, Compose deployment and NATS auth/ACLs |
-| 18–20 | Hardening and pilot | Threat-focused review, responsive/accessibility review, connector matrix, fault recovery, operator runbook, pilot fixes |
-| 21–22 | Contingency | Connector incompatibility, mobile-editor refinement, performance tuning, release packaging, deployment rehearsal |
+| 18–20 | Hardening and pilot | Threat-focused review, desktop accessibility review, connector matrix, fault recovery, operator runbook, pilot fixes |
+| 21–22 | Contingency | Connector incompatibility, desktop-editor refinement, performance tuning, release packaging, deployment rehearsal |
 
 Do not start the pilot until worker isolation, secret redaction, backup/restore, and interrupted-run behavior meet acceptance criteria.
 
@@ -119,7 +119,7 @@ For each UI flow:
 - Disk quota, retention, stale queue, failed backup, and mail backlog are visible/alertable.
 - Pilot load test at 4 active test cases remains within the target host's CPU, memory, and SQLite latency envelope.
 - Live statistics refresh load remains bounded at the configured concurrency and does not delay durable status writes or worker completion.
-- The full authoring workflow works at desktop, tablet, and mobile viewport sizes; mobile users can add/configure/reorder/connect/validate/publish without drag-and-drop.
+- The full authoring workflow works at the supported desktop minimum of 1280 × 720; keyboard users can add, configure, reorder, connect, validate, and publish without drag-and-drop.
 
 ## 7. Principal risks and responses
 
@@ -133,7 +133,7 @@ For each UI flow:
 | No-code promise conflicts with scripts/raw SQL | Keep scripts admin-approved and reusable; make structured nodes the normal route; label advanced code-backed options honestly. |
 | SQLite backup omits WAL state or encryption key | Use a consistent backup API, separately back up the key, and rehearse restore. |
 | NATS event loss or outage makes a live screen stale | Keep SQLite authoritative, publish through an outbox, sequence messages, snapshot on reconnect, and fall back to bounded polling. |
-| Mobile canvas is unusable on a narrow viewport | Provide equivalent list-based editing and explicit connect/reorder controls; test full authoring on touch devices. |
+| Unsupported narrow viewport makes the editor unusable | Declare a minimum supported viewport of 1280 × 720 and keep the desktop shell readable at that size. |
 
 ## 8. Open engineering decisions before coding
 

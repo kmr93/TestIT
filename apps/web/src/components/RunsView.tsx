@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { getRuns, rerunFailed, getRunComparison } from '../api/client';
 import { SuiteRun } from '../types';
+import { InlineAlert } from './InlineAlert';
 
 interface RunsViewProps {
   onSelectRun: (runId: string) => void;
@@ -20,6 +21,7 @@ export const RunsView: React.FC<RunsViewProps> = ({ onSelectRun }) => {
   const [runs, setRuns] = useState<SuiteRun[]>([]);
   const [comparisonModalData, setComparisonModalData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     loadRuns();
@@ -30,7 +32,9 @@ export const RunsView: React.FC<RunsViewProps> = ({ onSelectRun }) => {
     try {
       const data = await getRuns();
       setRuns(data);
-    } catch (_) {}
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to load run history.');
+    }
     setLoading(false);
   };
 
@@ -39,8 +43,8 @@ export const RunsView: React.FC<RunsViewProps> = ({ onSelectRun }) => {
     try {
       const res = await rerunFailed(id);
       onSelectRun(res.run_id);
-    } catch (err: any) {
-      alert(`Rerun failed: ${err.message}`);
+    } catch (err) {
+      setErrorMessage(`Rerun failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
@@ -49,8 +53,8 @@ export const RunsView: React.FC<RunsViewProps> = ({ onSelectRun }) => {
     try {
       const res = await getRunComparison(id);
       setComparisonModalData(res);
-    } catch (err: any) {
-      alert(`Comparison failed: ${err.message}`);
+    } catch (err) {
+      setErrorMessage(`Comparison failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
@@ -63,10 +67,12 @@ export const RunsView: React.FC<RunsViewProps> = ({ onSelectRun }) => {
             Historical test runs, live monitoring, comparisons against successful baselines
           </p>
         </div>
-        <button onClick={loadRuns} className="btn btn-secondary text-xs py-2 px-3">
-          Refresh Runs
+        <button onClick={loadRuns} disabled={loading} className="btn btn-secondary text-xs py-2 px-3">
+          {loading ? 'Refreshing…' : 'Refresh Runs'}
         </button>
       </div>
+
+      {errorMessage && <InlineAlert message={errorMessage} onDismiss={() => setErrorMessage(null)} className="mb-6" />}
 
       <div className="glass-panel overflow-hidden">
         <table className="w-full text-left text-xs">
@@ -83,7 +89,7 @@ export const RunsView: React.FC<RunsViewProps> = ({ onSelectRun }) => {
             {runs.length === 0 ? (
               <tr>
                 <td colSpan={5} className="py-8 text-center text-slate-500">
-                  No execution runs found. Trigger a suite run from the authoring view.
+                  {loading ? 'Loading run history…' : 'No execution runs found. Trigger a suite run from the authoring view.'}
                 </td>
               </tr>
             ) : (
