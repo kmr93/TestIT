@@ -70,7 +70,28 @@ def docker_request(method, path, body=None, headers=None, timeout=20):
 def target_host(envelope):
     node_type = envelope["node_type"]
     config = envelope.get("config") or {}
-    if node_type in {"api.request", "wait.until"}:
+    if node_type == "wait.until" and config.get("target") in {"mysql", "mongodb"}:
+        if config.get("tls") is False:
+            raise InvocationError(403, "TLS_REQUIRED", "Database connector TLS must remain enabled")
+        if config.get("target") == "mysql":
+            host = config.get("host")
+            if not host:
+                raise InvocationError(422, "DB_HOST_REQUIRED", "MySQL waits need an explicit connection host")
+        else:
+            raw_uri = config.get("uri")
+            if raw_uri:
+                parsed = urllib.parse.urlsplit(raw_uri)
+                if parsed.username or parsed.password:
+                    raise InvocationError(422, "DB_CREDENTIALS_IN_URI", "MongoDB credentials must be supplied through a secret reference, not a connection URL")
+                query_options = urllib.parse.parse_qs(parsed.query)
+                if query_options.get("tlsInsecure", ["false"])[0].lower() == "true" or query_options.get("tlsAllowInvalidCertificates", ["false"])[0].lower() == "true":
+                    raise InvocationError(403, "TLS_VERIFICATION_REQUIRED", "MongoDB TLS certificate verification cannot be disabled")
+                host = parsed.hostname
+            else:
+                host = config.get("host")
+            if not host:
+                raise InvocationError(422, "DB_HOST_REQUIRED", "MongoDB waits need an explicit connection host")
+    elif node_type in {"api.request", "wait.until"}:
         raw_url = config.get("url") or config.get("path")
         if not raw_url:
             raise InvocationError(422, "API_URL_REQUIRED", "API request nodes need an explicit URL")
@@ -160,6 +181,8 @@ def validate_envelope(envelope):
     secrets = envelope.get("secrets", {})
     if not isinstance(config, dict) or not isinstance(inputs, dict) or not isinstance(secrets, dict):
         raise InvocationError(400, "INVALID_ENVELOPE", "config, inputs, and secrets must be objects")
+    if envelope.get("node_type") == "wait.until" and config.get("target", "api") not in {"api", "mysql", "mongodb"}:
+        raise InvocationError(422, "WAIT_TARGET_UNSUPPORTED", "Wait-until target must be API, MySQL, or MongoDB")
     if has_inline_credentials(config):
         raise InvocationError(422, "INLINE_CREDENTIAL_DISALLOWED", "Credentials must use encrypted secret references")
     if len(json.dumps(envelope, separators=(",", ":")).encode("utf-8")) > MAX_REQUEST_BYTES:

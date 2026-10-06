@@ -51,7 +51,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
     const config = type === 'api.request'
       ? { method: 'GET', path: '', expected_status: 200, headers: {}, assertions: [] }
       : type === 'wait.until'
-      ? { method: 'GET', path: '', expected_status: 200, headers: {}, assertions: [], poll_interval_seconds: 2, request_timeout_seconds: 5 }
+      ? { target: 'api', method: 'GET', path: '', expected_status: 200, headers: {}, assertions: [], poll_interval_seconds: 2, request_timeout_seconds: 5 }
       : type === 'db.mysql'
       ? { connection_id: '', query: 'SELECT 1', expected_min_rows: 1, max_rows: 100, output_columns: [] }
       : type === 'db.mongodb'

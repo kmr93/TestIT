@@ -8,6 +8,8 @@
 
 - A desktop-only React interface with suite composition, pinned case revisions, an ordered node editor, node configuration, environment selection, run inputs, variable editing/preview, run monitoring, and report links.
 - Case data iteration from bounded JSON/CSV inputs. Iterations have distinct run records, pinned row indices, and deterministic variable context.
+- Suite revisions can declare typed run inputs. Publication validates the declaration, and the run API rejects missing required values, undeclared fields, and values with the wrong type before queueing.
+- Publishing checks variable references against declared run/suite/case/data-row names, built-in system names, and earlier nodes in phase execution order. Literal function arguments are also evaluated for configuration errors during publication.
 - Case-level setup, main, and cleanup phases. Setup failure skips main execution; cleanup is attempted after main/setup failure and cancellation. Cleanup errors remain reported and do not overwrite an earlier failed result.
 - A Rust orchestrator that validates and dispatches supported nodes to a separate worker manager, validates result envelopes, persists statuses/outputs/metrics, and observes cancellation. The worker manager creates short-lived isolated containers and enforces configured target hosts and resource/output bounds.
 - API wait-until polling for idempotent GET, HEAD, and OPTIONS requests, with bounded intervals/deadlines and attempt reporting.
@@ -20,8 +22,8 @@
 
 - Conditional branches and reusable case calls are absent. The visual editor is an ordered sequence, and publication rejects unsupported graph routing.
 - Suite-level setup and teardown and environment/resource locks are absent. Cleanup support is at case-iteration scope.
-- Supported nodes are API request, API wait-until, MySQL read, MongoDB read, bounded tabular count, and sleep. Cassandra and approved-script execution are not available in the publishable runtime.
-- Tabular checks, database waits, complete response extraction/assertions, declared case input contracts, full static variable typing, and SecretRef variable types do not cover the design's complete contract.
+- Supported nodes are API request, API/MySQL/MongoDB wait-until, MySQL read, MongoDB read, bounded tabular count, and sleep. Cassandra and approved-script execution are not available in the publishable runtime.
+- Tabular checks, complete response extraction/assertions, declared case input contracts for reusable calls, full static type inference across every workflow field, and SecretRef variable types do not cover the design's complete contract.
 
 ### Data, reporting, and operations
 

@@ -1084,17 +1084,23 @@ impl Orchestrator {
             .flatten()
             .ok_or(("CONNECTION_NOT_FOUND", "The selected connection profile is unavailable"))?;
             let node_type = node.get("type").and_then(Value::as_str).unwrap_or("");
+            let wait_target = node_config
+                .get("target")
+                .and_then(Value::as_str)
+                .unwrap_or("api");
             let compatible = matches!(
                 (profile.0.as_str(), node_type),
                 ("mysql", "db.mysql")
                     | ("mongodb", "db.mongodb")
                     | ("api", "api.request")
                     | ("http", "api.request")
-                    | ("api", "wait.until")
-                    | ("http", "wait.until")
                     | ("parquet", "data.tabular")
                     | ("delta", "data.tabular")
-            );
+            ) || (node_type == "wait.until"
+                && matches!(
+                    (profile.0.as_str(), wait_target),
+                    ("api" | "http", "api") | ("mysql", "mysql") | ("mongodb", "mongodb")
+                ));
             if !compatible {
                 return Err((
                     "CONNECTION_TYPE_MISMATCH",
@@ -1145,7 +1151,9 @@ impl Orchestrator {
 
         let mut resolver = VariableResolver::new(context);
         let node_type = node.get("type").and_then(Value::as_str).unwrap_or("");
-        if matches!(node_type, "db.mysql" | "db.cassandra")
+        if (matches!(node_type, "db.mysql" | "db.cassandra")
+            || (node_type == "wait.until"
+                && node_config.get("target").and_then(Value::as_str) == Some("mysql")))
             && node_config
                 .get("query")
                 .and_then(Value::as_str)
@@ -1503,7 +1511,7 @@ fn json_object_map(text: &str) -> HashMap<String, Value> {
         .collect()
 }
 
-fn case_dataset_rows(case_def: &Value) -> Result<Vec<Value>, String> {
+pub(crate) fn case_dataset_rows(case_def: &Value) -> Result<Vec<Value>, String> {
     let Some(dataset) = case_def.get("data_set").or_else(|| case_def.get("dataset")) else {
         return Ok(vec![json!({})]);
     };

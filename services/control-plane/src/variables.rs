@@ -215,12 +215,160 @@ pub fn validate_variable_definitions(definitions: Option<&Value>) -> Result<(), 
                     name
                 ));
             }
+            if let Some(arguments) = definition.get("args").and_then(Value::as_array) {
+                let arguments_value = Value::Array(arguments.clone());
+                if !contains_template_reference(&arguments_value) {
+                    let context = ResolutionContext::default();
+                    let mut resolver = VariableResolver::new(&context);
+                    let resolved_arguments = resolver
+                        .resolve_json_value(&arguments_value)
+                        .map_err(|error| format!("Variable '{}': {}", name, error))?;
+                    let resolved_arguments = resolved_arguments
+                        .as_array()
+                        .ok_or_else(|| format!("Variable '{}' arguments must be an array", name))?;
+                    resolver
+                        .evaluate_function(function, resolved_arguments)
+                        .map_err(|error| format!("Variable '{}': {}", name, error))?;
+                }
+            }
         } else if let (Some(kind), Some(value)) = (
             definition.get("type").and_then(Value::as_str),
             definition.get("value"),
         ) {
             validate_variable_type(kind, value)
                 .map_err(|error| format!("Variable '{}': {}", name, error))?;
+        }
+    }
+    Ok(())
+}
+
+fn contains_template_reference(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.contains("{{"),
+        Value::Array(items) => items.iter().any(contains_template_reference),
+        Value::Object(items) => items.values().any(contains_template_reference),
+        _ => false,
+    }
+}
+
+pub fn validate_input_schema(schema: Option<&Value>) -> Result<(), String> {
+    let Some(schema) = schema else {
+        return Ok(());
+    };
+    let fields = schema
+        .as_object()
+        .ok_or_else(|| "The suite input schema must be an object".to_string())?;
+    if fields.len() > 100 || serde_json::to_vec(schema).map_or(true, |bytes| bytes.len() > 65_536) {
+        return Err("The suite input schema exceeds the 100 field or 64 KiB limit".to_string());
+    }
+    for (name, definition) in fields {
+        let lowered_name = name.to_ascii_lowercase();
+        let mut chars = name.chars();
+        if name.len() > 128
+            || [
+                "password",
+                "secret",
+                "token",
+                "authorization",
+                "cookie",
+                "credential",
+            ]
+            .iter()
+            .any(|marker| lowered_name.contains(marker))
+            || !chars
+                .next()
+                .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+            || chars.any(|ch| ch != '_' && !ch.is_ascii_alphanumeric())
+        {
+            return Err(format!("Run input name '{}' is invalid", name));
+        }
+        let definition = definition
+            .as_object()
+            .ok_or_else(|| format!("Run input '{}' needs a type definition", name))?;
+        if definition
+            .keys()
+            .any(|key| !matches!(key.as_str(), "type" | "required"))
+        {
+            return Err(format!(
+                "Run input '{}' has an unsupported schema property",
+                name
+            ));
+        }
+        let kind = definition
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("Run input '{}' needs a supported type", name))?;
+        if !matches!(
+            kind,
+            "string"
+                | "integer"
+                | "decimal"
+                | "number"
+                | "boolean"
+                | "object"
+                | "array"
+                | "datetime"
+        ) {
+            return Err(format!("Run input '{}' uses an unsupported type", name));
+        }
+        if definition
+            .get("required")
+            .is_some_and(|required| !required.is_boolean())
+        {
+            return Err(format!(
+                "Run input '{}' required flag must be boolean",
+                name
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_run_inputs(schema: Option<&Value>, inputs: &Value) -> Result<(), String> {
+    let Some(schema) = schema else {
+        // Preserve compatibility with suite revisions published before input contracts existed.
+        return Ok(());
+    };
+    validate_input_schema(Some(schema))?;
+    let fields = schema
+        .as_object()
+        .expect("schema was validated as an object");
+    let values = inputs
+        .as_object()
+        .ok_or_else(|| "Run inputs must be a JSON object".to_string())?;
+    for name in values.keys() {
+        if !fields.contains_key(name) {
+            return Err(format!(
+                "Run input '{}' is not declared by this suite",
+                name
+            ));
+        }
+    }
+    for (name, definition) in fields {
+        let required = definition
+            .get("required")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let Some(value) = values.get(name) else {
+            if required {
+                return Err(format!("Required run input '{}' is missing", name));
+            }
+            continue;
+        };
+        let kind = definition
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("string");
+        let valid = match kind {
+            "number" => value.as_i64().is_some() || value.as_f64().is_some(),
+            "decimal" => value.as_f64().is_some(),
+            _ => validate_variable_type(kind, value).is_ok(),
+        };
+        if !valid {
+            return Err(format!(
+                "Run input '{}' does not match type '{}'",
+                name, kind
+            ));
         }
     }
     Ok(())
@@ -528,13 +676,13 @@ impl<'a> VariableResolver<'a> {
 
     /// Interpolate template expressions like `{{env.api_base_url}}/users/{{iteration.id}}`
     pub fn interpolate_string(&mut self, text: &str) -> Result<String, String> {
-        let re = Regex::new(r"\{\{([a-zA-Z_]+)\.([a-zA-Z0-9_\.]+)\}\}").unwrap();
+        let re = Regex::new(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\.([^{}]+?)\s*\}\}").unwrap();
         let mut result = text.to_string();
 
         for cap in re.captures_iter(text) {
             let full_match = &cap[0];
             let scope = &cap[1];
-            let path = &cap[2];
+            let path = cap[2].trim();
 
             let resolved_val = self.resolve_ref(scope, path)?;
             let replacement = match resolved_val {
@@ -553,10 +701,11 @@ impl<'a> VariableResolver<'a> {
         match val {
             Value::String(s) => {
                 // If it's a standalone single token like `{{env.num}}`, preserve its underlying type
-                let re_exact = Regex::new(r"^\{\{([a-zA-Z_]+)\.([a-zA-Z0-9_\.]+)\}\}$").unwrap();
+                let re_exact =
+                    Regex::new(r"^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\.([^{}]+?)\s*\}\}$").unwrap();
                 if let Some(cap) = re_exact.captures(s) {
                     let scope = &cap[1];
-                    let path = &cap[2];
+                    let path = cap[2].trim();
                     return self.resolve_ref(scope, path);
                 }
                 // Otherwise string interpolation

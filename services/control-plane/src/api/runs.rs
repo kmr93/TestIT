@@ -115,6 +115,22 @@ pub async fn trigger_run(
         }
     };
 
+    let suite_definition =
+        serde_json::from_str::<Value>(&revision.definition_json).unwrap_or(Value::Null);
+    let run_inputs = payload
+        .inputs
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if let Err(message) =
+        crate::variables::validate_run_inputs(suite_definition.get("input_schema"), &run_inputs)
+    {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": message, "code": "RUN_INPUTS_INVALID" })),
+        );
+    }
+
     let environment_exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM environments WHERE id = ? AND workspace_id = ?)",
     )

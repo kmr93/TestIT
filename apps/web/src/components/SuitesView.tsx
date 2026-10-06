@@ -57,6 +57,8 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
   const [connections, setConnections] = useState<any[]>([]);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState('');
   const [runInputsText, setRunInputsText] = useState('{}');
+  const [inputSchemaText, setInputSchemaText] = useState('{}');
+  const [hasInputSchemaContract, setHasInputSchemaContract] = useState(true);
   const [selectedRevisionId, setSelectedRevisionId] = useState('');
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -133,12 +135,16 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
       if (asset.kind === 'suite') {
         setSuiteCases(definition?.cases || []);
         setSuiteVariables(definition?.variables || {});
+        setInputSchemaText(JSON.stringify(definition?.input_schema || {}, null, 2));
+        setHasInputSchemaContract(Object.prototype.hasOwnProperty.call(definition || {}, 'input_schema'));
         setCaseVariables({});
         setNodes([]);
         setDatasetFormat('json');
         setDatasetText('');
         setSelectedNode(null);
       } else {
+        setInputSchemaText('{}');
+        setHasInputSchemaContract(false);
         const parsedNodes = definition?.nodes || [];
         setNodes(parsedNodes);
         setCaseVariables(definition?.variables || {});
@@ -176,7 +182,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
         kind: newAssetKind,
         name,
         initial_draft: newAssetKind === 'suite'
-          ? { id: crypto.randomUUID(), name, description: '', execution_mode: 'sequential', cases: [] }
+          ? { id: crypto.randomUUID(), name, description: '', execution_mode: 'sequential', input_schema: {}, cases: [] }
           : {
               id: crypto.randomUUID(),
               name,
@@ -212,7 +218,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
     }
     try {
       const saved = await updateAssetDraft(selectedAsset.id, {
-        draft_json: buildDraft(selectedAsset, nodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText),
+        draft_json: buildDraft(selectedAsset, nodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText, inputSchemaText),
         expected_draft_version: selectedAsset.draft_version,
       });
       setSelectedAsset({ ...selectedAsset, draft_version: saved.draft_version });
@@ -233,7 +239,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
     }
     try {
       const saved = await updateAssetDraft(selectedAsset.id, {
-        draft_json: buildDraft(selectedAsset, nodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText),
+        draft_json: buildDraft(selectedAsset, nodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText, inputSchemaText),
         expected_draft_version: selectedAsset.draft_version,
       });
       const nextVersion = saved.draft_version as number;
@@ -282,10 +288,12 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
       return;
     }
     try {
+      const parsedRunInputs = parseRunInputs(runInputsText);
+      if (canEdit || hasInputSchemaContract) validateRunInputValues(inputSchemaText, parsedRunInputs);
       let revisionId = selectedRevisionId;
       if (canEdit) {
         const saved = await updateAssetDraft(selectedAsset.id, {
-          draft_json: buildDraft(selectedAsset, nodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText),
+          draft_json: buildDraft(selectedAsset, nodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText, inputSchemaText),
           expected_draft_version: selectedAsset.draft_version,
         });
         const nextVersion = saved.draft_version as number;
@@ -303,7 +311,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
       const runRes = await triggerRun({
         suite_revision_id: revisionId,
         environment_id: selectedEnvironmentId,
-        inputs: parseRunInputs(runInputsText),
+        inputs: parsedRunInputs,
       });
 
       onRunStarted(runRes.run_id);
@@ -320,6 +328,16 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
     };
     setSelectedNode(updated);
     setNodes(nodes.map((n) => (n.id === updated.id ? updated : n)));
+  };
+
+  const updateWaitTarget = (target: 'api' | 'mysql' | 'mongodb') => {
+    if (!selectedNode) return;
+    const updated = {
+      ...selectedNode,
+      config: { ...selectedNode.config, target, connection_id: '' },
+    };
+    setSelectedNode(updated);
+    setNodes(nodes.map((node) => node.id === updated.id ? updated : node));
   };
 
   return (
@@ -506,13 +524,17 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
                   );
                 })}
               </ol>
-              <VariableDefinitionsEditor
+              {canEdit && <VariableDefinitionsEditor
                 key={`${selectedAsset?.id}-suite-variables`}
                 title="Suite variables"
                 value={suiteVariables}
                 onCommit={setSuiteVariables}
                 onValidationChange={setVariableEditorError}
-              />
+              />}
+              <label className="block rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs font-semibold text-slate-300">Declared run inputs (JSON object)
+                <textarea rows={5} value={inputSchemaText} disabled={!canEdit} onChange={(event) => { setInputSchemaText(event.target.value); setHasInputSchemaContract(true); }} className="input-field mt-2 resize-y font-mono text-[11px] disabled:opacity-70" placeholder={'{\n  "customer_id": { "type": "integer", "required": true }\n}'} />
+                <span className="mt-1 block text-[10px] font-normal text-slate-500">Declare input name, type, and required flag. Undeclared or mismatched values are rejected before a run starts.</span>
+              </label>
               {canRun && <label className="mt-4 block rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs font-semibold text-slate-300">Run inputs (JSON object)
                 <textarea rows={4} value={runInputsText} onChange={(event) => setRunInputsText(event.target.value)} className="input-field mt-2 resize-y font-mono text-[11px]" placeholder={'{\n  "customer_id": 1042\n}'} />
                 <span className="mt-1 block text-[10px] font-normal text-slate-500">Reference values with {'{{run.customer_id}}'}. Inputs are bounded and cannot contain credential fields.</span>
@@ -574,7 +596,9 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
                   <select value={selectedNode.config.connection_id || ''} onChange={(event) => updateNodeConfig('connection_id', event.target.value)} className="input-field mt-1.5 text-xs">
                     <option value="">Select a profile</option>
                     {connections.filter((connection) => {
-                      const allowed = ['api.request', 'wait.until'].includes(selectedNode.type) ? ['api', 'http'] : selectedNode.type === 'db.mysql' ? ['mysql'] : selectedNode.type === 'db.mongodb' ? ['mongodb'] : ['parquet', 'delta'];
+                      const allowed = selectedNode.type === 'wait.until'
+                        ? (selectedNode.config.target || 'api') === 'api' ? ['api', 'http'] : [selectedNode.config.target]
+                        : selectedNode.type === 'api.request' ? ['api', 'http'] : selectedNode.type === 'db.mysql' ? ['mysql'] : selectedNode.type === 'db.mongodb' ? ['mongodb'] : ['parquet', 'delta'];
                       return allowed.includes(connection.connector_type);
                     }).map((connection) => <option key={connection.id} value={connection.id}>{connection.name} · {connection.connector_type}</option>)}
                   </select>
@@ -582,7 +606,15 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
                 </label>
               )}
 
-              {['api.request', 'wait.until'].includes(selectedNode.type) && <>
+              {selectedNode.type === 'wait.until' && <label className="block text-xs font-semibold text-slate-300">Condition source
+                <select value={selectedNode.config.target || 'api'} onChange={(event) => updateWaitTarget(event.target.value as 'api' | 'mysql' | 'mongodb')} className="input-field mt-1.5 text-xs">
+                  <option value="api">HTTP API response</option>
+                  <option value="mysql">MySQL query row count</option>
+                  <option value="mongodb">MongoDB document count</option>
+                </select>
+              </label>}
+
+              {(selectedNode.type === 'api.request' || (selectedNode.type === 'wait.until' && (selectedNode.config.target || 'api') === 'api')) && <>
                 <label className="block text-xs font-semibold text-slate-300">HTTP method
                   <select value={selectedNode.config.method || 'GET'} onChange={(event) => updateNodeConfig('method', event.target.value)} className="input-field mt-1.5 text-xs font-mono">
                     {(selectedNode.type === 'wait.until' ? ['GET', 'HEAD', 'OPTIONS'] : ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']).map((method) => <option key={method}>{method}</option>)}
@@ -598,7 +630,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
                 {selectedNode.type === 'api.request' && <ConfigJsonInput label="Request body (JSON)" value={selectedNode.config.body ?? {}} onCommit={(value) => updateNodeConfig('body', value)} />}
                 <ApiAssertionsEditor value={selectedNode.config.assertions || []} onCommit={(value) => updateNodeConfig('assertions', value)} />
                 {selectedNode.type === 'wait.until' && <>
-                  <p className="rounded-lg border border-purple-900/60 bg-purple-950/20 p-2 text-[10px] leading-4 text-purple-200">This node repeats a read-only request until its status and assertions pass or the step timeout is reached.</p>
+                  <p className="rounded-lg border border-purple-900/60 bg-purple-950/20 p-2 text-[10px] leading-4 text-purple-200">This node repeats an idempotent API request until its status and assertions pass or the step timeout is reached.</p>
                   <label className="block text-xs font-semibold text-slate-300">Poll interval (seconds)
                     <input type="number" min={1} max={60} value={selectedNode.config.poll_interval_seconds ?? 2} onChange={(event) => updateNodeConfig('poll_interval_seconds', Math.min(60, Math.max(1, Number(event.target.value))))} className="input-field mt-1.5 text-xs font-mono" />
                   </label>
@@ -610,6 +642,40 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
                   <input type="number" min={1} value={selectedNode.config.max_response_time_ms ?? ''} onChange={(event) => updateNodeConfig('max_response_time_ms', event.target.value ? Number(event.target.value) : undefined)} className="input-field mt-1.5 text-xs font-mono" />
                 </label>
                 {selectedNode.type === 'api.request' && <ConfigJsonInput label="Selected response fields (JSON)" value={selectedNode.config.extract || {}} onCommit={(value) => updateNodeConfig('extract', value)} />}
+              </>}
+
+              {selectedNode.type === 'wait.until' && selectedNode.config.target === 'mysql' && <>
+                <label className="block text-xs font-semibold text-slate-300">Read-only SQL query
+                  <textarea rows={5} value={selectedNode.config.query || ''} onChange={(event) => updateNodeConfig('query', event.target.value)} className="input-field mt-1.5 resize-y font-mono text-xs" placeholder="SELECT id FROM orders WHERE status = %s" />
+                </label>
+                <ConfigJsonInput label="Bound query parameters (JSON array)" value={selectedNode.config.params || []} onCommit={(value) => updateNodeConfig('params', value)} />
+                <label className="block text-xs font-semibold text-slate-300">Minimum rows expected
+                  <input type="number" min={0} max={500} value={selectedNode.config.expected_min_rows ?? 1} onChange={(event) => updateNodeConfig('expected_min_rows', Number(event.target.value))} className="input-field mt-1.5 text-xs font-mono" />
+                </label>
+                <p className="text-[10px] leading-4 text-slate-500">Values stay bound parameters. Each poll reports only the row count, never row contents.</p>
+                <label className="block text-xs font-semibold text-slate-300">Poll interval (seconds)
+                  <input type="number" min={1} max={60} value={selectedNode.config.poll_interval_seconds ?? 2} onChange={(event) => updateNodeConfig('poll_interval_seconds', Math.min(60, Math.max(1, Number(event.target.value))))} className="input-field mt-1.5 text-xs font-mono" />
+                </label>
+                <label className="block text-xs font-semibold text-slate-300">Query timeout per poll (seconds)
+                  <input type="number" min={1} max={60} value={selectedNode.config.request_timeout_seconds ?? 5} onChange={(event) => updateNodeConfig('request_timeout_seconds', Math.min(60, Math.max(1, Number(event.target.value))))} className="input-field mt-1.5 text-xs font-mono" />
+                </label>
+              </>}
+
+              {selectedNode.type === 'wait.until' && selectedNode.config.target === 'mongodb' && <>
+                <label className="block text-xs font-semibold text-slate-300">Collection
+                  <input value={selectedNode.config.collection || ''} onChange={(event) => updateNodeConfig('collection', event.target.value)} className="input-field mt-1.5 text-xs font-mono" />
+                </label>
+                <ConfigJsonInput label="Read filter (JSON)" value={selectedNode.config.filter || {}} onCommit={(value) => updateNodeConfig('filter', value)} />
+                <label className="block text-xs font-semibold text-slate-300">Minimum documents expected
+                  <input type="number" min={0} max={500} value={selectedNode.config.expected_min_count ?? 1} onChange={(event) => updateNodeConfig('expected_min_count', Number(event.target.value))} className="input-field mt-1.5 text-xs font-mono" />
+                </label>
+                <p className="text-[10px] leading-4 text-slate-500">Each poll reports only the document count, never document contents.</p>
+                <label className="block text-xs font-semibold text-slate-300">Poll interval (seconds)
+                  <input type="number" min={1} max={60} value={selectedNode.config.poll_interval_seconds ?? 2} onChange={(event) => updateNodeConfig('poll_interval_seconds', Math.min(60, Math.max(1, Number(event.target.value))))} className="input-field mt-1.5 text-xs font-mono" />
+                </label>
+                <label className="block text-xs font-semibold text-slate-300">Query timeout per poll (seconds)
+                  <input type="number" min={1} max={60} value={selectedNode.config.request_timeout_seconds ?? 5} onChange={(event) => updateNodeConfig('request_timeout_seconds', Math.min(60, Math.max(1, Number(event.target.value))))} className="input-field mt-1.5 text-xs font-mono" />
+                </label>
               </>}
 
               {selectedNode.type === 'db.mysql' && <>
@@ -750,13 +816,16 @@ function buildDraft(
   suiteVariables: Record<string, any>,
   datasetFormat: 'json' | 'csv',
   datasetText: string,
+  inputSchemaText: string,
 ) {
   if (asset.kind === 'suite') {
+    const inputSchema = parseRunInputSchema(inputSchemaText);
     return {
       id: asset.id,
       name: asset.name,
       execution_mode: 'sequential',
       variables: suiteVariables,
+      input_schema: inputSchema,
       cases: suiteCases.map((item, ordinal) => ({ ...item, ordinal })),
     };
   }
@@ -800,6 +869,52 @@ function parseRunInputs(value: string): Record<string, unknown> {
     throw new Error('Run inputs cannot contain credential fields.');
   }
   return parsed as Record<string, unknown>;
+}
+
+function parseRunInputSchema(value: string): Record<string, { type: string; required?: boolean }> {
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { throw new Error('Run input declarations must be valid JSON.'); }
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('Run input declarations must be a JSON object.');
+  if (new TextEncoder().encode(JSON.stringify(parsed)).length > 65_536) throw new Error('Run input declarations exceed 64 KiB.');
+  const fields = parsed as Record<string, unknown>;
+  if (Object.keys(fields).length > 100) throw new Error('Declare no more than 100 run inputs.');
+  const supportedTypes = ['string', 'integer', 'decimal', 'number', 'boolean', 'object', 'array', 'datetime'];
+  for (const [name, definition] of Object.entries(fields)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(name)) throw new Error(`“${name}” is not a valid run input name.`);
+    if (!definition || Array.isArray(definition) || typeof definition !== 'object') throw new Error(`Run input “${name}” needs a type definition.`);
+    const candidate = definition as Record<string, unknown>;
+    if (typeof candidate.type !== 'string' || !supportedTypes.includes(candidate.type)) throw new Error(`Run input “${name}” needs a supported type.`);
+    if (candidate.required !== undefined && typeof candidate.required !== 'boolean') throw new Error(`Run input “${name}” required flag must be true or false.`);
+  }
+  return fields as Record<string, { type: string; required?: boolean }>;
+}
+
+function validateRunInputValues(schemaText: string, values: Record<string, unknown>) {
+  const schema = parseRunInputSchema(schemaText);
+  for (const name of Object.keys(values)) {
+    if (!Object.prototype.hasOwnProperty.call(schema, name)) throw new Error(`Run input “${name}” is not declared by this suite.`);
+  }
+  for (const [name, definition] of Object.entries(schema)) {
+    if (!Object.prototype.hasOwnProperty.call(values, name)) {
+      if (definition.required) throw new Error(`Required run input “${name}” is missing.`);
+      continue;
+    }
+    const value = values[name];
+    const valid = definition.type === 'string' || definition.type === 'datetime'
+      ? typeof value === 'string'
+      : definition.type === 'integer'
+        ? typeof value === 'number' && Number.isInteger(value)
+        : definition.type === 'decimal' || definition.type === 'number'
+          ? typeof value === 'number' && Number.isFinite(value)
+          : definition.type === 'boolean'
+            ? typeof value === 'boolean'
+            : definition.type === 'array'
+              ? Array.isArray(value)
+              : definition.type === 'object'
+                ? Boolean(value) && !Array.isArray(value) && typeof value === 'object'
+                : false;
+    if (!valid) throw new Error(`Run input “${name}” does not match type “${definition.type}”.`);
+  }
 }
 
 interface ConfigJsonInputProps {

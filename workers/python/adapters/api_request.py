@@ -231,12 +231,20 @@ def execute_wait_until(
     secrets: Dict[str, str],
     emit_progress: Any,
 ) -> Tuple[str, Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-    """Poll an idempotent API read until its configured assertions pass or its deadline expires."""
+    """Poll an API or read-only database condition until it passes or expires."""
+    target = str(config.get("target", "api")).lower()
     method = str(config.get("method", "GET")).upper()
-    if method not in {"GET", "HEAD", "OPTIONS"}:
+    if target == "api" and method not in {"GET", "HEAD", "OPTIONS"}:
         return (
             "ERROR",
             {"code": "WAIT_METHOD_UNSAFE", "message": "Wait-until only permits idempotent read methods", "class": "INTERNAL", "details": {}},
+            {},
+            {"duration_ms": 0.0},
+        )
+    if target not in {"api", "mysql", "mongodb"}:
+        return (
+            "ERROR",
+            {"code": "WAIT_TARGET_UNSUPPORTED", "message": "Wait-until target must be API, MySQL, or MongoDB", "class": "INTERNAL", "details": {}},
             {},
             {"duration_ms": 0.0},
         )
@@ -254,6 +262,7 @@ def execute_wait_until(
         )
 
     request_config = {key: value for key, value in config.items() if key not in {"poll_interval_seconds", "request_timeout_seconds", "max_attempts"}}
+    request_config.pop("target", None)
     started = time.monotonic()
     deadline = started + deadline_seconds
     attempts = 0
@@ -263,8 +272,24 @@ def execute_wait_until(
         attempts += 1
         remaining = max(1, int(deadline - time.monotonic()))
         request_config["timeout_seconds"] = min(request_timeout, remaining)
+        request_config["connect_timeout_seconds"] = min(request_timeout, remaining, 30)
+        request_config["connect_timeout_ms"] = min(request_timeout, remaining, 30) * 1000
         emit_progress("polling_condition", {"attempt": attempts, "max_attempts": max_attempts})
-        status, error, outputs, metrics = execute_api_request(request_config, inputs, secrets, lambda *_: None)
+        if target == "api":
+            status, error, outputs, metrics = execute_api_request(request_config, inputs, secrets, lambda *_: None)
+        elif target == "mysql":
+            from adapters.db_mysql import execute_mysql_query
+
+            request_config.setdefault("expected_min_rows", 1)
+            status, error, outputs, metrics = execute_mysql_query(request_config, inputs, secrets, lambda *_: None)
+            # A wait step observes only a count and never carries query rows forward.
+            outputs = {"row_count": outputs.get("row_count")} if isinstance(outputs, dict) and "row_count" in outputs else {}
+        else:
+            from adapters.db_mongodb import execute_mongodb_query
+
+            request_config.setdefault("expected_min_count", 1)
+            status, error, outputs, metrics = execute_mongodb_query(request_config, inputs, secrets, lambda *_: None)
+            outputs = {"count": outputs.get("count")} if isinstance(outputs, dict) and "count" in outputs else {}
         last_error = error or {}
         last_metrics = metrics or {}
         if status == "SUCCEEDED":
@@ -294,9 +319,16 @@ def execute_wait_until(
         "TIMED_OUT",
         {
             "code": "WAIT_CONDITION_TIMEOUT",
-            "message": "The API condition did not pass before its deadline",
+            "message": "The condition did not pass before its deadline",
             "class": "TIMEOUT",
-            "details": {"attempts": attempts, "last_status_code": last_metrics.get("status_code")},
+            "details": {
+                "attempts": attempts,
+                "last_observation": {
+                    key: last_metrics[key]
+                    for key in ("status_code", "row_count", "doc_count")
+                    if key in last_metrics
+                },
+            },
         },
         {},
         {"duration_ms": elapsed_ms, "attempts": attempts, "condition_met": False},

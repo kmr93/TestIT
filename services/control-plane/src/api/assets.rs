@@ -384,6 +384,10 @@ pub async fn publish_revision(
             }
             if node.get("type").and_then(Value::as_str) == Some("wait.until") {
                 let config = node.get("config").unwrap_or(&Value::Null);
+                let target = config
+                    .get("target")
+                    .and_then(Value::as_str)
+                    .unwrap_or("api");
                 let method = config
                     .get("method")
                     .and_then(Value::as_str)
@@ -393,13 +397,24 @@ pub async fn publish_revision(
                     .get("poll_interval_seconds")
                     .and_then(Value::as_i64)
                     .unwrap_or(2);
-                if !matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS")
-                    || !(1..=60).contains(&poll_interval)
-                {
+                let target_config_valid = match target {
+                    "api" => matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS"),
+                    "mysql" => config
+                        .get("query")
+                        .and_then(Value::as_str)
+                        .and_then(|query| query.split_whitespace().next())
+                        .is_some_and(|word| word.eq_ignore_ascii_case("SELECT")),
+                    "mongodb" => config
+                        .get("collection")
+                        .and_then(Value::as_str)
+                        .is_some_and(|collection| !collection.trim().is_empty()),
+                    _ => false,
+                };
+                if !target_config_valid || !(1..=60).contains(&poll_interval) {
                     return (
                         StatusCode::UNPROCESSABLE_ENTITY,
                         Json(
-                            json!({ "error": "Wait-until requires an idempotent read method and a poll interval from 1 to 60 seconds", "code": "WAIT_UNTIL_CONFIG_INVALID" }),
+                            json!({ "error": "Wait-until requires a valid API read, MySQL SELECT, or MongoDB collection target and a poll interval from 1 to 60 seconds", "code": "WAIT_UNTIL_CONFIG_INVALID" }),
                         ),
                     );
                 }
@@ -411,7 +426,20 @@ pub async fn publish_revision(
                 Json(json!({ "error": message, "code": "CASE_DATASET_INVALID" })),
             );
         }
+        if let Err(message) = validate_case_variable_references(&draft_val, None) {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": message, "code": "VARIABLE_REFERENCE_INVALID" })),
+            );
+        }
     } else if asset.kind == "suite" {
+        if let Err(message) = crate::variables::validate_input_schema(draft_val.get("input_schema"))
+        {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": message, "code": "SUITE_INPUT_SCHEMA_INVALID" })),
+            );
+        }
         let cases = draft_val.get("cases").and_then(Value::as_array);
         let Some(cases) = cases.filter(|cases| !cases.is_empty()) else {
             return (
@@ -430,8 +458,8 @@ pub async fn publish_revision(
                 .get("revision_id")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let valid: Option<(String, String)> = sqlx::query_as(
-                "SELECT assets.kind, assets.workspace_id FROM asset_revisions
+            let valid: Option<(String, String, String)> = sqlx::query_as(
+                "SELECT assets.kind, assets.workspace_id, asset_revisions.definition_json FROM asset_revisions
                  JOIN assets ON assets.id = asset_revisions.asset_id
                  WHERE asset_revisions.id = ? AND assets.id = ?",
             )
@@ -440,13 +468,39 @@ pub async fn publish_revision(
             .fetch_optional(&state.db)
             .await
             .unwrap_or(None);
-            if !matches!(valid, Some((ref kind, ref workspace)) if kind == "case" && workspace == &asset.workspace_id)
-            {
+            let Some((kind, workspace, case_definition)) = valid else {
                 return (
                     StatusCode::UNPROCESSABLE_ENTITY,
                     Json(
                         json!({ "error": "Each suite case must reference a published case revision in this workspace" }),
                     ),
+                );
+            };
+            if kind != "case" || workspace != asset.workspace_id {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(
+                        json!({ "error": "Each suite case must reference a published case revision in this workspace" }),
+                    ),
+                );
+            }
+            let case_definition = match serde_json::from_str::<Value>(&case_definition) {
+                Ok(definition) => definition,
+                Err(_) => {
+                    return (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        Json(
+                            json!({ "error": "A pinned case revision contains invalid definition data" }),
+                        ),
+                    )
+                }
+            };
+            if let Err(message) =
+                validate_case_variable_references(&case_definition, Some(&draft_val))
+            {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({ "error": message, "code": "VARIABLE_REFERENCE_INVALID" })),
                 );
             }
         }
@@ -606,6 +660,93 @@ pub async fn get_revision(
             Json(json!({ "error": e.to_string() })),
         ),
     }
+}
+
+fn validate_case_variable_references(
+    case_definition: &Value,
+    suite_definition: Option<&Value>,
+) -> Result<(), String> {
+    use std::collections::HashSet;
+
+    let token_pattern = regex::Regex::new(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\.([^{}]+?)\s*\}\}")
+        .map_err(|_| "Could not initialize variable reference validation".to_string())?;
+    let case_names = case_definition
+        .get("variables")
+        .and_then(Value::as_object)
+        .map(|values| values.keys().cloned().collect::<HashSet<_>>())
+        .unwrap_or_default();
+    let suite_names = suite_definition
+        .and_then(|definition| definition.get("variables"))
+        .and_then(Value::as_object)
+        .map(|values| values.keys().cloned().collect::<HashSet<_>>())
+        .unwrap_or_default();
+    let run_names = suite_definition
+        .and_then(|definition| definition.get("input_schema"))
+        .and_then(Value::as_object)
+        .map(|values| values.keys().cloned().collect::<HashSet<_>>());
+    let iteration_names = crate::orchestrator::case_dataset_rows(case_definition)?
+        .into_iter()
+        .filter_map(|row| row.as_object().cloned())
+        .flat_map(|row| row.into_iter().map(|(key, _)| key))
+        .collect::<HashSet<_>>();
+    let mut prior_steps = HashSet::new();
+    let mut nodes = case_definition
+        .get("nodes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    nodes.sort_by_key(
+        |node| match node.get("phase").and_then(Value::as_str).unwrap_or("main") {
+            "setup" => 0,
+            "cleanup" => 2,
+            _ => 1,
+        },
+    );
+    for node in nodes {
+        let references = json!({
+            "config": node.get("config").unwrap_or(&Value::Null),
+            "inputs": node.get("inputs").unwrap_or(&Value::Null)
+        });
+        let serialized = references.to_string();
+        for captures in token_pattern.captures_iter(&serialized) {
+            let scope = captures
+                .get(1)
+                .map(|value| value.as_str())
+                .unwrap_or_default();
+            let path = captures
+                .get(2)
+                .map(|value| value.as_str().trim())
+                .unwrap_or_default();
+            let exists = match scope {
+                "sys" => matches!(
+                    path,
+                    "run_id" | "suite_id" | "case_id" | "iteration_id" | "started_at_utc"
+                ),
+                "case" => case_names.contains(path),
+                "iteration" => iteration_names.contains(path),
+                "suite" => suite_definition.is_none() || suite_names.contains(path),
+                "run" => run_names
+                    .as_ref()
+                    .is_none_or(|run_names| run_names.contains(path)),
+                "step" => prior_steps.contains(path.split('.').next().unwrap_or_default()),
+                "env" => true,
+                _ => false,
+            };
+            if !exists {
+                return Err(format!(
+                    "Variable reference '{{{{{}.{}}}}}' is unknown or cannot be used before this step",
+                    scope, path
+                ));
+            }
+        }
+        if let Some(id) = node.get("id").and_then(Value::as_str) {
+            prior_steps.insert(id.to_string());
+        }
+        if let Some(name) = node.get("name").and_then(Value::as_str) {
+            prior_steps.insert(name.to_string());
+        }
+    }
+    Ok(())
 }
 
 /// Cycle detection via Kahn's algorithm
