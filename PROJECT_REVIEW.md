@@ -4,6 +4,15 @@
 **Design baseline:** `design/` v1.2 with desktop-only support
 **Conclusion:** The repository now contains a real authoring-to-execution path for a bounded set of workflow node types. The checked-in build is not yet the complete product described in the design documents, and full acceptance is not established.
 
+## Update in this implementation pass
+
+- Added definition-only project ZIP export and import for suites, cases, published revisions, and connection shapes. Exports redact configured secret values, replace credential-bearing URLs, and mark connection credentials for re-entry.
+- Added archive bounds and path checks, ZIP CRC checks, manifest and SHA-256 validation, revision/dependency/workflow validation, conflict preview, ID remapping, atomic merge-as-new import, and audit records for successful export/import.
+- Added desktop author controls to download a bundle, preview an upload, review name conflicts and credential re-entry, and apply the import.
+- Added audited connection-profile editing so an administrator can bind locally encrypted secret names to imported profiles without exposing secret plaintext.
+- Bundles do not include run history, reports/artifacts, scripts, or a SQLite snapshot. The importer currently accepts the uncompressed ZIP format produced by this application; external deflated ZIPs are not accepted.
+- Current verification for this pass: `cargo fmt --all`, `cargo check --workspace --locked`, `npm run build`, and `git diff --check` passed. Full tests and Docker/Compose/browser execution were not run.
+
 ## Implemented in the current tree
 
 - A desktop-only React interface with suite composition, pinned case revisions, an ordered node editor, node configuration, environment selection, run inputs, variable editing/preview, run monitoring, and report links.
@@ -27,8 +36,7 @@
 
 ### Data, reporting, and operations
 
-- Portable ZIP bundle import/export with conflict preview and transactional application is absent.
-- Consistent SQLite backup/restore, retention, SMTP notifications, signed webhook triggers, and schedules are absent.
+- Definition-only ZIP bundle import/export with conflict preview and transactional application is implemented. Consistent SQLite backup/restore, retention, SMTP notifications, signed webhook triggers, and schedules are absent.
 - NATS has an outbox publisher, while SSE resumes durable events from SQLite. NATS consumer fan-out, auth/ACLs, outage behavior, and notification/outbox recovery still need acceptance work.
 - Key rotation, an independent workspace-isolation audit, operational alerts/runbook, and disk/retention controls are absent or incomplete.
 
@@ -42,5 +50,6 @@
 - `cargo fmt --all`: passed.
 - `cargo check --workspace --locked`: passed after fixing a compile error in phase execution. Existing warnings remain.
 - `npm run build`: passed.
+- `git diff --check`: passed; Git reported line-ending normalization notices only.
 - `python -m compileall -q workers/python deploy/worker-manager`: passed.
 - Full tests, Compose startup, Docker worker execution, connector integration, and browser walkthrough were not run during this implementation pass.

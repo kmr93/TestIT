@@ -13,6 +13,7 @@ import {
   createEnvironment,
   getConnections,
   createConnection,
+  updateConnection,
   testConnection,
   getSecrets,
   createSecret,
@@ -33,6 +34,7 @@ export const EnvironmentsView: React.FC = () => {
   const [newConnType, setNewConnType] = useState('mysql');
   const [newConnSettings, setNewConnSettings] = useState('{\n  "host": "localhost",\n  "port": 3306,\n  "database": "test_db"\n}');
   const [newConnSecrets, setNewConnSecrets] = useState('{\n  "password_secret": "mysql_password"\n}');
+  const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
 
   const [newSecretName, setNewSecretName] = useState('');
   const [newSecretValue, setNewSecretValue] = useState('');
@@ -74,17 +76,41 @@ export const EnvironmentsView: React.FC = () => {
     e.preventDefault();
     if (!newConnName) return;
     try {
-      await createConnection({
+      const payload = {
         name: newConnName,
         connector_type: newConnType,
         settings: JSON.parse(newConnSettings),
         secret_refs: JSON.parse(newConnSecrets),
-      });
+      };
+      if (editingConnectionId) await updateConnection(editingConnectionId, payload);
+      else await createConnection(payload);
+      setEditingConnectionId(null);
       setNewConnName('');
+      setNewConnSettings('{}');
+      setNewConnSecrets('{}');
       loadAll();
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Unable to create the connection profile.');
     }
+  };
+
+  const editConnection = (connection: any) => {
+    setEditingConnectionId(connection.id);
+    setNewConnName(connection.name);
+    setNewConnType(connection.connector_type);
+    try { setNewConnSettings(JSON.stringify(JSON.parse(connection.settings_json), null, 2)); }
+    catch { setNewConnSettings('{}'); }
+    try { setNewConnSecrets(JSON.stringify(JSON.parse(connection.secret_refs_json || '{}'), null, 2)); }
+    catch { setNewConnSecrets('{}'); }
+    setTab('conn');
+    setErrorMessage(null);
+  };
+
+  const cancelEditConnection = () => {
+    setEditingConnectionId(null);
+    setNewConnName('');
+    setNewConnSettings('{}');
+    setNewConnSecrets('{}');
   };
 
   const handleTestConn = async (id: string) => {
@@ -233,18 +259,25 @@ export const EnvironmentsView: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-slate-200 text-xs">{c.name}</span>
                         <span className="badge badge-queued text-[10px]">{c.connector_type}</span>
+                        {(c.settings_json?.includes('[REENTER_') || c.secret_refs_json?.includes('[REENTER_')) && <span className="rounded-md border border-amber-800 bg-amber-950/40 px-2 py-0.5 text-[10px] text-amber-300">Credentials needed</span>}
                       </div>
                       <pre className="font-mono text-[11px] text-slate-400 mt-1">
                         {c.settings_json}
                       </pre>
                     </div>
-                    <button
-                      onClick={() => handleTestConn(c.id)}
-                      className="btn btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
-                    >
-                      <Wifi className="w-3.5 h-3.5 text-indigo-400" />
-                      Test Connectivity
-                    </button>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        onClick={() => editConnection(c)}
+                        className="btn btn-secondary text-xs py-1.5 px-3"
+                      >Edit / Rebind</button>
+                      <button
+                        onClick={() => handleTestConn(c.id)}
+                        className="btn btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
+                      >
+                        <Wifi className="w-3.5 h-3.5 text-indigo-400" />
+                        Test Connectivity
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
@@ -252,7 +285,8 @@ export const EnvironmentsView: React.FC = () => {
           </div>
 
           <div className="glass-panel p-5 space-y-4 h-fit">
-            <h3 className="text-sm font-bold text-slate-200">New Connection Profile</h3>
+            <h3 className="text-sm font-bold text-slate-200">{editingConnectionId ? 'Edit Connection Profile' : 'New Connection Profile'}</h3>
+            {editingConnectionId && <p className="text-[11px] leading-5 text-amber-300">Choose encrypted secret names or IDs in Secret References. Secret plaintext is never shown here.</p>}
             <form onSubmit={handleCreateConn} className="space-y-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">Profile Name</label>
@@ -274,7 +308,8 @@ export const EnvironmentsView: React.FC = () => {
                 >
                   <option value="mysql">MySQL / MariaDB</option>
                   <option value="mongodb">MongoDB</option>
-                  <option value="cassandra">Cassandra CQL</option>
+                  <option value="api">HTTP API</option>
+                  <option value="http">HTTP endpoint</option>
                   <option value="parquet">Parquet Tabular</option>
                   <option value="delta">Delta Lake</option>
                 </select>
@@ -301,8 +336,9 @@ export const EnvironmentsView: React.FC = () => {
                 <p className="mt-1 text-[10px] text-slate-500">Use adapter fields such as <code>password_secret</code> and reference a secret name or ID stored above.</p>
               </div>
               <button type="submit" className="btn btn-primary w-full text-xs py-2">
-                Save Profile
+                {editingConnectionId ? 'Save Profile & Secret Bindings' : 'Save Profile'}
               </button>
+              {editingConnectionId && <button type="button" onClick={cancelEditConnection} className="btn btn-secondary w-full text-xs py-2">Cancel Edit</button>}
             </form>
           </div>
         </div>

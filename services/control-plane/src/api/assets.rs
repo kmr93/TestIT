@@ -662,7 +662,7 @@ pub async fn get_revision(
     }
 }
 
-fn validate_case_variable_references(
+pub(crate) fn validate_case_variable_references(
     case_definition: &Value,
     suite_definition: Option<&Value>,
 ) -> Result<(), String> {

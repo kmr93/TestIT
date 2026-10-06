@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Plus,
   Play,
@@ -10,6 +10,8 @@ import {
   ArrowDown,
   ArrowUp,
   X,
+  Download,
+  Upload,
 } from 'lucide-react';
 import {
   getAssets,
@@ -22,6 +24,9 @@ import {
   triggerRun,
   getEnvironments,
   getConnections,
+  downloadProjectBundle,
+  previewProjectBundle,
+  importProjectBundle,
 } from '../api/client';
 import { Asset, NodeInstance } from '../types';
 import { WorkflowCanvas } from './WorkflowCanvas';
@@ -62,6 +67,10 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
   const [selectedRevisionId, setSelectedRevisionId] = useState('');
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const bundleInputRef = useRef<HTMLInputElement>(null);
+  const [bundleFile, setBundleFile] = useState<File | null>(null);
+  const [bundlePreview, setBundlePreview] = useState<any | null>(null);
+  const [isHandlingBundle, setIsHandlingBundle] = useState(false);
 
   useEffect(() => {
     loadAssets();
@@ -320,6 +329,64 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
     }
   };
 
+  const handleExportBundle = async () => {
+    setIsHandlingBundle(true);
+    setErrorMessage(null);
+    try {
+      const blob = await downloadProjectBundle();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'TestIT-project.zip';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setStatusMsg('Project bundle downloaded');
+      setTimeout(() => setStatusMsg(null), 3000);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to export the project bundle.');
+    } finally {
+      setIsHandlingBundle(false);
+    }
+  };
+
+  const handleBundleSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setIsHandlingBundle(true);
+    setErrorMessage(null);
+    try {
+      const preview = await previewProjectBundle(file);
+      setBundleFile(file);
+      setBundlePreview(preview);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to read this project bundle.');
+      event.target.value = '';
+    } finally {
+      setIsHandlingBundle(false);
+    }
+  };
+
+  const handleImportBundle = async () => {
+    if (!bundleFile) return;
+    setIsHandlingBundle(true);
+    setErrorMessage(null);
+    try {
+      const result = await importProjectBundle(bundleFile);
+      setBundlePreview(null);
+      setBundleFile(null);
+      if (bundleInputRef.current) bundleInputRef.current.value = '';
+      setStatusMsg(`Imported ${result.asset_count} assets and ${result.connection_count} connections`);
+      setTimeout(() => setStatusMsg(null), 5000);
+      await loadAssets();
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to import this project bundle.');
+    } finally {
+      setIsHandlingBundle(false);
+    }
+  };
+
   const updateNodeConfig = (key: string, value: any) => {
     if (!selectedNode) return;
     const updated = {
@@ -357,6 +424,34 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
         </div>
 
         <div className="flex items-center gap-2">
+          {canEdit && <>
+            <input
+              ref={bundleInputRef}
+              type="file"
+              accept=".zip,application/zip"
+              className="sr-only"
+              aria-label="Choose a TestIT project bundle to import"
+              onChange={handleBundleSelected}
+            />
+            <button
+              type="button"
+              onClick={() => bundleInputRef.current?.click()}
+              disabled={isHandlingBundle}
+              className="btn btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
+              title="Preview and import a project bundle"
+            >
+              <Upload className="w-3.5 h-3.5" /> Import
+            </button>
+            <button
+              type="button"
+              onClick={handleExportBundle}
+              disabled={isHandlingBundle}
+              className="btn btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
+              title="Download a portable project bundle"
+            >
+              <Download className="w-3.5 h-3.5" /> Export
+            </button>
+          </>}
           {statusMsg && (
             <span className="text-xs text-emerald-400 font-medium px-3 py-1 bg-emerald-950/40 border border-emerald-800 rounded-lg flex items-center gap-1.5 animate-fadeIn">
               <CheckCircle2 className="w-3.5 h-3.5" /> {statusMsg}
@@ -791,6 +886,56 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
                 </button>
               </div>
             </form>
+          </section>
+        </div>
+      )}
+
+      {bundlePreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm">
+          <section role="dialog" aria-modal="true" aria-labelledby="bundle-preview-title" className="glass-panel w-full max-w-2xl p-6 shadow-2xl">
+            <div className="mb-5 flex items-start justify-between">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-300">Project portability</p>
+                <h2 id="bundle-preview-title" className="mt-1 text-lg font-semibold text-slate-100">Review bundle contents</h2>
+                <p className="mt-1 text-sm text-slate-400">Import creates new copies and keeps the revisions from this archive.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setBundlePreview(null); setBundleFile(null); if (bundleInputRef.current) bundleInputRef.current.value = ''; }}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
+                aria-label="Close bundle preview"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3"><p className="text-[10px] uppercase tracking-wider text-slate-500">Assets</p><p className="mt-1 text-xl font-semibold text-slate-100">{bundlePreview.asset_count}</p></div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3"><p className="text-[10px] uppercase tracking-wider text-slate-500">Published revisions</p><p className="mt-1 text-xl font-semibold text-slate-100">{bundlePreview.revision_count}</p></div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3"><p className="text-[10px] uppercase tracking-wider text-slate-500">Connections</p><p className="mt-1 text-xl font-semibold text-slate-100">{bundlePreview.connection_count}</p></div>
+            </div>
+            <div className="mt-4 max-h-64 space-y-2 overflow-y-auto pr-1">
+              {bundlePreview.assets?.map((asset: any, index: number) => (
+                <div key={`${asset.name}-${index}`} className="flex items-center justify-between rounded-lg border border-slate-800/80 bg-slate-950/40 px-3 py-2.5">
+                  <div className="min-w-0"><p className="truncate text-sm font-medium text-slate-200">{asset.name}</p><p className="mt-0.5 text-[10px] uppercase tracking-wider text-slate-500">{asset.kind}</p></div>
+                  <span className="ml-3 shrink-0 rounded-md bg-slate-800 px-2 py-1 text-[10px] text-slate-300">{asset.revisions} revisions</span>
+                </div>
+              ))}
+              {bundlePreview.connections?.map((connection: any, index: number) => (
+                <div key={`${connection.name}-${index}`} className="flex items-center justify-between rounded-lg border border-slate-800/80 bg-slate-950/40 px-3 py-2.5">
+                  <div className="min-w-0"><p className="truncate text-sm font-medium text-slate-200">{connection.name}</p><p className="mt-0.5 text-[10px] uppercase tracking-wider text-slate-500">{connection.connector_type} connection</p></div>
+                  {connection.secrets_need_reentry && <span className="ml-3 shrink-0 rounded-md bg-amber-950/60 px-2 py-1 text-[10px] text-amber-300">Credentials needed</span>}
+                </div>
+              ))}
+              {bundlePreview.asset_count === 0 && bundlePreview.connection_count === 0 && <p className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-slate-400">This bundle contains no assets or connections.</p>}
+            </div>
+            {bundlePreview.conflicts?.length > 0 && <p className="mt-4 rounded-lg border border-indigo-900/70 bg-indigo-950/30 px-3 py-2 text-xs leading-5 text-indigo-200">{bundlePreview.conflicts.length} existing name{bundlePreview.conflicts.length === 1 ? '' : 's'} match this bundle. Imported copies will receive unique names.</p>}
+            {(bundlePreview.connections || []).some((connection: any) => connection.secrets_need_reentry) && <p className="mt-3 rounded-lg border border-amber-900/70 bg-amber-950/30 px-3 py-2 text-xs leading-5 text-amber-200">Secret values are never included. Add them under Encrypted Secrets, then choose the new secret names in each imported profile’s Secret References before testing the connection.</p>}
+            <div className="mt-6 flex justify-end gap-2">
+              <button type="button" onClick={() => { setBundlePreview(null); setBundleFile(null); if (bundleInputRef.current) bundleInputRef.current.value = ''; }} className="btn btn-secondary" disabled={isHandlingBundle}>Cancel</button>
+              <button type="button" onClick={handleImportBundle} disabled={isHandlingBundle || !bundleFile || (bundlePreview.asset_count === 0 && bundlePreview.connection_count === 0)} className="btn btn-primary flex items-center gap-2">
+                <Upload className="h-4 w-4" />{isHandlingBundle ? 'Importing…' : 'Import as new copies'}
+              </button>
+            </div>
           </section>
         </div>
       )}

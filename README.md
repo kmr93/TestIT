@@ -2,7 +2,7 @@
 
 TestIT is a desktop web application for authoring and running backend validation workflows. Its current implementation includes a Rust control plane, a React/TypeScript interface, a Python worker runtime, SQLite persistence, NATS outbox publication, and Docker Compose deployment.
 
-The editor supports ordered API, database, tabular-count, and wait steps; case setup/main/cleanup groups; bounded JSON/CSV iterations; suite composition; scoped variables; run monitoring; and HTML/JUnit/CSV exports. The design pack includes additional capabilities that are still in progress. See [PROJECT_REVIEW.md](PROJECT_REVIEW.md) and [IMPLEMENTATION_TRACKER.md](IMPLEMENTATION_TRACKER.md) for current coverage and verification.
+The editor supports ordered API, database, tabular-count, and wait steps; case setup/main/cleanup groups; bounded JSON/CSV iterations; suite composition; scoped variables; run monitoring; HTML/JUnit/CSV exports; and definition-only project bundles with import preview. Imported connection profiles can be edited to bind local encrypted secrets. The design pack includes additional capabilities that are still in progress. See [PROJECT_REVIEW.md](PROJECT_REVIEW.md) and [IMPLEMENTATION_TRACKER.md](IMPLEMENTATION_TRACKER.md) for current coverage and verification.
 
 ## Desktop support
 
@@ -50,4 +50,4 @@ cargo run -- --server http://localhost:8080 run --suite <suite_revision_id> --en
 
 ## Current limits
 
-The current publishable runtime supports API requests, API/MySQL/MongoDB wait-until polling, MySQL read checks, MongoDB read checks, bounded tabular row-count checks, and sleep. Branches, reusable cases, Cassandra/scripts, suite-level setup/teardown, resource locks, portable project bundles, backup/restore, retention, SMTP notifications, schedules, and signed webhooks remain open design work. Compose and real worker-engine execution must be verified in the intended Linux deployment environment before relying on the application for production checks.
+The current publishable runtime supports API requests, API/MySQL/MongoDB wait-until polling, MySQL read checks, MongoDB read checks, bounded tabular row-count checks, and sleep. Branches, reusable cases, Cassandra/scripts, suite-level setup/teardown, resource locks, SQLite backup/restore, retention, SMTP notifications, schedules, and signed webhooks remain open design work. Bundles currently include definitions and connection shapes only, and the importer accepts stored ZIP entries produced by this application. Compose and real worker-engine execution must be verified in the intended Linux deployment environment before relying on the application for production checks.

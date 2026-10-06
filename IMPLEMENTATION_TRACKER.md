@@ -10,11 +10,11 @@
 | Area | Implemented | Still required for design acceptance |
 |---|---|---|
 | Desktop authoring | React/TypeScript desktop UI; suite composer pins case revisions; ordered case editor supports API, wait-until, MySQL, MongoDB, tabular count and sleep nodes; case setup/main/cleanup phases; JSON/CSV iterations; typed suite run-input declarations; scoped variables and preview | Branch and reusable-case execution; complete extraction/assertion coverage; accessible browser review at the supported minimum viewport |
-| API and identity | Rust/Axum API; Argon2 login, expiring/revocable sessions, CSRF on mutations, rate limiting, role gates, user administration, secret encryption; workspace checks on API resources | Full object-level isolation audit, key rotation and security acceptance tests |
+| API and identity | Rust/Axum API; Argon2 login, expiring/revocable sessions, CSRF on mutations, rate limiting, role gates, user administration, secret encryption; workspace checks on API resources; audited connection profile editing and secret rebinding | Full object-level isolation audit, key rotation and security acceptance tests |
 | Run execution | Durable suite/case/step records; bounded case concurrency; isolated worker-manager dispatch; result validation; bounded worker runtime; run cancellation; failed-case rerun pins; API/MySQL/MongoDB wait-until; typed suite run inputs; publish-time variable reference validation | Restart/recovery guarantees across every interruption point; environment/resource locks; Linux Docker integration and connector compatibility matrix |
 | Events and monitoring | Durable sequenced SQLite run events and progress snapshots; SSE resume; outbox publisher; active case/step and counts in monitor; Prometheus text metrics endpoint | NATS-backed fan-out and outage behavior acceptance; authorized reconnect tests; alerts and load evidence |
 | Reports and CLI | HTML/JUnit/CSV exports; bounded CLI run wait and exit status | Report redaction/access acceptance; SMTP notifications and delivery deduplication |
-| Portability and operations | Compose deployment, health endpoints, required encryption key, NATS and worker-manager services | Validated project bundle import/export; consistent backup/restore; retention controls; NATS authentication/ACLs; operational runbook |
+| Portability and operations | Compose deployment, health endpoints, required encryption key, NATS and worker-manager services; definition-only ZIP export/import with checksums, secret redaction/re-entry markers, conflict preview, UUID remapping, transactional import, and audit events | Consistent backup/restore; retention controls; NATS authentication/ACLs; operational runbook |
 
 ## Design requirements still open
 
@@ -23,7 +23,7 @@
 - `data.tabular` is limited to the adapter's bounded read/count behavior; row-level assertions, extraction, and broad storage-provider coverage remain open.
 - Variable definitions support the implemented typed literals and allow-listed functions, but declared case inputs, complete static type checking, and SecretRef variables are incomplete.
 - Cleanup is supported per case iteration. Suite-level setup/teardown and resource locks are not implemented.
-- Project ZIP bundles, consistent SQLite backup/restore, retention, SMTP completion mail, signed webhooks, and schedule triggers are not implemented.
+- Project ZIP bundles now support definition-only export/import; run history, artifacts, script assets, consistent SQLite backup/restore, and retention remain unsupported. SMTP completion mail, signed webhooks, and schedule triggers are not implemented.
 - NATS publication exists through an outbox, while the browser event stream resumes from SQLite. NATS consumer fan-out, authentication/ACL configuration, and outage/recovery acceptance remain open.
 - Authentication and route roles exist; independent workspace-isolation/security review and key rotation remain open.
 - Docker Compose end-to-end runs, Linux worker-engine behavior, connector integration, and full browser interaction have not been verified here.
@@ -33,6 +33,7 @@
 - `cargo fmt --all`: passed.
 - `cargo check --workspace --locked`: passed after the final Rust compile fix; existing unused/dead-code warnings remain.
 - `npm run build` in `apps/web`: passed.
+- `git diff --check`: passed (Git reported line-ending normalization notices only).
 - `python -m compileall -q workers/python deploy/worker-manager`: passed.
 - Full test suites and Compose/Docker execution were not run in this pass.
 

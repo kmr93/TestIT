@@ -352,6 +352,9 @@ fn role_can_access(role: &str, method: &Method, path: &str) -> bool {
             true
         }
         ("AUTHOR", "GET", "/api/v1/connections") | ("RUNNER", "GET", "/api/v1/connections") => true,
+        ("AUTHOR", "GET", "/api/v1/portability/export") => true,
+        ("AUTHOR", "POST", "/api/v1/portability/preview")
+        | ("AUTHOR", "POST", "/api/v1/portability/import") => true,
         ("AUTHOR", "POST", "/api/v1/specifications/openapi/validate")
         | ("AUTHOR", "POST", "/api/v1/specifications/openapi/import")
         | ("AUTHOR", "POST", "/api/v1/variables/preview") => true,

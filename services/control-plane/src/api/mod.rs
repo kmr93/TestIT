@@ -4,6 +4,7 @@ pub mod auth;
 pub mod connections;
 pub mod events;
 pub mod health;
+pub mod portability;
 pub mod runs;
 pub mod specifications;
 pub mod variables;
@@ -88,6 +89,10 @@ pub fn create_router(state: AppState) -> Router {
             get(connections::list_connections).post(connections::create_connection),
         )
         .route(
+            "/api/v1/connections/:id",
+            axum::routing::put(connections::update_connection),
+        )
+        .route(
             "/api/v1/connections/:id/test",
             post(connections::test_connection),
         )
@@ -104,6 +109,7 @@ pub fn create_router(state: AppState) -> Router {
             "/api/v1/specifications/openapi/import",
             post(specifications::import_openapi),
         )
+        .merge(portability::routes())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_session,

@@ -35,6 +35,37 @@ export async function apiRequest<T>(endpoint: string, options?: RequestInit): Pr
   return res.json();
 }
 
+export async function downloadProjectBundle(): Promise<Blob> {
+  const response = await fetch(`${API_BASE}/portability/export`, {
+    credentials: 'same-origin',
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    let message = `Request failed (${response.status})`;
+    try {
+      message = JSON.parse(errorText).error || message;
+    } catch (_) {
+      message = errorText || message;
+    }
+    throw new Error(message);
+  }
+  return response.blob();
+}
+
+export const previewProjectBundle = (file: File) =>
+  apiRequest<any>('/portability/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/zip' },
+    body: file,
+  });
+
+export const importProjectBundle = (file: File) =>
+  apiRequest<any>('/portability/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/zip' },
+    body: file,
+  });
+
 export const login = (email: string, password: string) =>
   apiRequest<any>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
 export const logout = () => apiRequest<{ status: string }>('/auth/logout', { method: 'POST' });
@@ -78,6 +109,8 @@ export const createEnvironment = (data: { name: string; description?: string; va
 export const getConnections = () => apiRequest<any[]>('/connections');
 export const createConnection = (data: { name: string; connector_type: string; settings: any; secret_refs?: any }) =>
   apiRequest<any>('/connections', { method: 'POST', body: JSON.stringify(data) });
+export const updateConnection = (id: string, data: { name: string; connector_type: string; settings: any; secret_refs?: any }) =>
+  apiRequest<any>(`/connections/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 export const testConnection = (id: string) => apiRequest<any>(`/connections/${id}/test`, { method: 'POST' });
 export const getSecrets = () => apiRequest<any[]>('/secrets');
 export const createSecret = (data: { name: string; plaintext: string }) =>

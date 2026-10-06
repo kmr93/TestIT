@@ -280,6 +280,135 @@ pub async fn create_connection(
     )
 }
 
+pub async fn update_connection(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthenticatedUser>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(payload): Json<CreateConnectionRequest>,
+) -> impl IntoResponse {
+    if payload.name.trim().is_empty() || payload.name.chars().count() > 128 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Connection name must be between 1 and 128 characters" })),
+        );
+    }
+    if !matches!(
+        payload.connector_type.as_str(),
+        "mysql" | "mongodb" | "api" | "http" | "parquet" | "delta"
+    ) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Unsupported connection type" })),
+        );
+    }
+    if !payload.settings.is_object() || contains_inline_sensitive_value(&payload.settings) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(
+                json!({ "error": "Connection settings must be an object without inline credentials" }),
+            ),
+        );
+    }
+    let secret_refs = payload
+        .secret_refs
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let Some(references) = secret_refs.as_object() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Secret references must be a JSON object" })),
+        );
+    };
+    for value in references.values() {
+        let Some(reference) = value
+            .as_str()
+            .filter(|reference| !reference.trim().is_empty())
+        else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "Each secret reference must be a secret ID or name" })),
+            );
+        };
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM secrets WHERE workspace_id = ? AND (id = ? OR name = ?))",
+        )
+        .bind(&user.workspace_id)
+        .bind(reference)
+        .bind(reference)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(false);
+        if !exists {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "A secret reference is unavailable in this workspace" })),
+            );
+        }
+    }
+    let now = Utc::now().to_rfc3339();
+    let mut tx = match state.db.begin().await {
+        Ok(tx) => tx,
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({ "error": "Connection service is temporarily unavailable" })),
+            )
+        }
+    };
+    let updated = sqlx::query(
+        "UPDATE connection_profiles SET name = ?, connector_type = ?, settings_json = ?, secret_refs_json = ?
+         WHERE id = ? AND workspace_id = ?",
+    )
+    .bind(&payload.name)
+    .bind(&payload.connector_type)
+    .bind(payload.settings.to_string())
+    .bind(secret_refs.to_string())
+    .bind(&id)
+    .bind(&user.workspace_id)
+    .execute(&mut *tx)
+    .await;
+    match updated {
+        Ok(result) if result.rows_affected() == 1 => {}
+        Ok(_) => {
+            let _ = tx.rollback().await;
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "Connection profile was not found" })),
+            );
+        }
+        Err(_) => {
+            let _ = tx.rollback().await;
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({ "error": "Could not update this connection profile" })),
+            );
+        }
+    }
+    if record_admin_audit(
+        &mut tx,
+        &user.id,
+        "connection.update",
+        "connection_profile",
+        &id,
+        json!({ "name": payload.name, "connector_type": payload.connector_type }),
+        &now,
+    )
+    .await
+    .is_err()
+        || tx.commit().await.is_err()
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "Could not record the connection profile update" })),
+        );
+    }
+    (
+        StatusCode::OK,
+        Json(json!({ "id": id, "name": payload.name, "status": "SAVED", "updated_at": now })),
+    )
+}
+
 pub async fn test_connection(
     State(state): State<AppState>,
     Path(conn_id): Path<String>,
