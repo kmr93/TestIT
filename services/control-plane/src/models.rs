@@ -210,6 +210,8 @@ pub struct VariablePreviewRequest {
     pub environment_id: Option<String>,
     pub sample_inputs: Option<Value>,
     pub sample_iteration: Option<Value>,
+    pub suite_variables: Option<Value>,
+    pub case_variables: Option<Value>,
 }
 
 #[derive(Clone, Debug, Serialize)]

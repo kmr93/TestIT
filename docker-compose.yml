@@ -23,6 +23,8 @@ services:
     depends_on:
       nats:
         condition: service_healthy
+      worker-manager:
+        condition: service_healthy
     environment:
       - RUST_LOG=info,testit_control_plane=debug
       - PORT=8080
@@ -30,26 +32,59 @@ services:
       - NATS_URL=nats://nats:4222
       - ARTIFACTS_DIR=/data/artifacts
       - MASTER_KEY_HEX=${MASTER_KEY_HEX:?Set MASTER_KEY_HEX to a unique 64-character hex key before starting TestIT}
-      - DOCKER_WORKER_IMAGE=${DOCKER_WORKER_IMAGE:-testit-worker:latest}
-      - HOST_ARTIFACTS_PATH=${HOST_ARTIFACTS_PATH:-./data/artifacts}
-      - WORKER_NETWORK=testit-worker-net
+      - BOOTSTRAP_ADMIN_EMAIL=${BOOTSTRAP_ADMIN_EMAIL:-}
+      - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-}
+      - COOKIE_SECURE=${COOKIE_SECURE:-true}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      - WORKER_MANAGER_URL=http://worker-manager:8081
+      - WORKER_MANAGER_TOKEN=${WORKER_MANAGER_TOKEN:?Set WORKER_MANAGER_TOKEN to a unique 64-character value before starting TestIT}
       - MAX_ACTIVE_CASES=4
     volumes:
       - testit-db:/data/db
       - testit-artifacts:/data/artifacts
-      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8080:8080"
     networks:
       - internal-bus
       - frontend-net
-      - worker-net
+      - worker-control-net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 5s
+
+  worker-manager:
+    build:
+      context: .
+      dockerfile: deploy/worker-manager/Dockerfile
+    image: testit-worker-runtime:local
+    container_name: testit-worker-manager
+    restart: unless-stopped
+    environment:
+      - WORKER_MANAGER_TOKEN=${WORKER_MANAGER_TOKEN:?Set WORKER_MANAGER_TOKEN to a unique 64-character value before starting TestIT}
+      - WORKER_IMAGE=testit-worker-runtime:local
+      - WORKER_NETWORK=testit-worker-net
+      - WORKER_ALLOWED_HOSTS=${WORKER_ALLOWED_HOSTS:-}
+      - WORKER_MANAGER_PORT=8081
+      - DOCKER_API_VERSION=v1.43
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    read_only: true
+    tmpfs: [/tmp:size=16m,noexec,nosuid,nodev]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    pids_limit: 128
+    networks:
+      - worker-control-net
+      - worker-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health/live', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   web:
     build:
@@ -78,6 +113,8 @@ networks:
   worker-net:
     name: testit-worker-net
     internal: false
+  worker-control-net:
+    internal: true
 
 volumes:
   testit-db:

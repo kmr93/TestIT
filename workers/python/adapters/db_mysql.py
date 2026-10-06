@@ -1,3 +1,4 @@
+import re
 import time
 from typing import Any, Dict, Tuple
 
@@ -8,100 +9,89 @@ def execute_mysql_query(
     secrets: Dict[str, str],
     emit_progress: Any,
 ) -> Tuple[str, Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-    """
-    Executes a read-only query against MySQL/MariaDB with strict limits and parameter binding.
-    """
-    emit_progress("connecting_db", {"connector": "mysql"})
-    query = config.get("query", "SELECT 1")
-    params = config.get("params", [])
-    max_rows = config.get("max_rows", 100)
-
-    # Disallow destructive statements in read-only validation
-    query_upper = query.strip().upper()
-    if any(query_upper.startswith(k) for k in ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE"]):
+    """Run one bounded, parameterized SELECT against MySQL or MariaDB."""
+    emit_progress("connecting_db", {"connector_version": 1})
+    query = config.get("query", "").strip()
+    if (
+        not re.match(r"^SELECT\b", query, re.IGNORECASE)
+        or ";" in query
+        or re.search(r"\b(INTO\s+(OUTFILE|DUMPFILE)|FOR\s+UPDATE|LOCK\s+IN\s+SHARE\s+MODE|SLEEP\s*\(|BENCHMARK\s*\()", query, re.IGNORECASE)
+    ):
         return (
             "ERROR",
-            {
-                "code": "MUTATION_DISALLOWED",
-                "message": "Destructive or mutating SQL queries are not permitted in validation nodes",
-                "class": "INTERNAL",
-                "details": {},
-            },
+            {"code": "READ_ONLY_QUERY_REQUIRED", "message": "Only one read-only SELECT statement is allowed", "class": "INTERNAL", "details": {}},
             {},
             {"duration_ms": 0.0},
         )
 
-    emit_progress("executing_query", {"query_preview": query[:64]})
-    start_time = time.time()
+    host = config.get("host")
+    username = config.get("user")
+    database = config.get("database")
+    if not host or not username or not database:
+        return (
+            "ERROR",
+            {"code": "CONNECTION_CONFIG_REQUIRED", "message": "Connection host, user, and database are required", "class": "INTERNAL", "details": {}},
+            {},
+            {"duration_ms": 0.0},
+        )
 
+    started = time.time()
+    emit_progress("executing_query", {"query_length": len(query)})
+    conn = None
     try:
         import pymysql
 
-        host = config.get("host", "localhost")
-        port = config.get("port", 3306)
-        user = config.get("user", "root")
-        db_name = config.get("database", "test")
-        password = secrets.get(config.get("password_secret", ""), "")
-
+        max_rows = min(max(int(config.get("max_rows", 100)), 1), 500)
+        timeout_seconds = min(max(int(config.get("timeout_seconds", 30)), 1), 3600)
         conn = pymysql.connect(
             host=host,
-            port=port,
-            user=user,
-            password=password,
-            database=db_name,
-            cursorclass=pymysql.cursors.DictCursor,
-            connect_timeout=10,
+            port=int(config.get("port", 3306)),
+            user=username,
+            password=secrets.get(config.get("password_secret", ""), ""),
+            database=database,
+            cursorclass=pymysql.cursors.SSDictCursor,
+            connect_timeout=min(max(int(config.get("connect_timeout_seconds", 10)), 1), 30),
+            read_timeout=timeout_seconds,
+            write_timeout=10,
+            ssl={"check_hostname": True} if config.get("tls", True) else None,
         )
-
         with conn.cursor() as cursor:
-            cursor.execute(query, params)
-            rows = cursor.fetchmany(max_rows)
-            row_count = cursor.rowcount
-
-        conn.close()
-        duration_ms = (time.time() - start_time) * 1000
-
-        # Assertions
-        expected_min_rows = config.get("expected_min_rows")
-        if expected_min_rows is not None and row_count < expected_min_rows:
+            cursor.execute(query, config.get("params", []))
+            rows = cursor.fetchmany(max_rows + 1)
+        truncated = len(rows) > max_rows
+        rows = rows[:max_rows]
+        row_count = len(rows)
+        expected_min = config.get("expected_min_rows")
+        duration_ms = (time.time() - started) * 1000
+        if expected_min is not None and row_count < int(expected_min):
             return (
                 "ASSERTION_FAILED",
-                {
-                    "code": "ROW_COUNT_MISMATCH",
-                    "message": f"Expected at least {expected_min_rows} rows, found {row_count}",
-                    "class": "ASSERTION",
-                    "details": {"actual_rows": row_count, "expected_min": expected_min_rows},
-                },
-                {"row_count": row_count, "sample_rows": rows[:5]},
+                {"code": "ROW_COUNT_MISMATCH", "message": f"Expected at least {expected_min} rows, found {row_count}", "class": "ASSERTION", "details": {"actual_rows": row_count, "expected_min": int(expected_min)}},
+                {"row_count": row_count},
                 {"duration_ms": duration_ms, "row_count": row_count},
             )
 
+        columns = config.get("output_columns", [])
+        selected_rows = []
+        if isinstance(columns, list):
+            for row in rows:
+                selected_rows.append({key: row[key] for key in columns if key in row})
         return (
             "SUCCEEDED",
             {},
-            {"row_count": row_count, "rows": rows},
+            {"row_count": row_count, "rows_truncated": truncated, "selected_rows": selected_rows},
             {"duration_ms": duration_ms, "row_count": row_count},
         )
-
-    except ImportError:
-        # Fallback simulation for local tests without database host
-        duration_ms = (time.time() - start_time) * 1000
-        return (
-            "SUCCEEDED",
-            {},
-            {"row_count": 1, "rows": [{"result": 1}]},
-            {"duration_ms": 10.0, "row_count": 1},
-        )
-    except Exception as e:
-        duration_ms = (time.time() - start_time) * 1000
+    except Exception:
         return (
             "ERROR",
-            {
-                "code": "DB_QUERY_FAILED",
-                "message": str(e),
-                "class": "TRANSIENT_NETWORK",
-                "details": {},
-            },
+            {"code": "DB_QUERY_FAILED", "message": "Unable to query the configured MySQL or MariaDB connection", "class": "TRANSIENT_NETWORK", "details": {}},
             {},
-            {"duration_ms": duration_ms},
+            {"duration_ms": (time.time() - started) * 1000},
         )
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass

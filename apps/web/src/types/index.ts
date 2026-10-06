@@ -22,6 +22,7 @@ export interface NodeInstance {
   type: string;
   type_version: number;
   name: string;
+  phase?: 'setup' | 'main' | 'cleanup';
   timeout_seconds: number;
   config: Record<string, any>;
   inputs?: Record<string, any>;
@@ -48,7 +49,7 @@ export interface SuiteDefinition {
   name: string;
   description: string;
   execution_mode: 'sequential' | 'parallel';
-  cases: Array<{ case_id: string; ordinal: number }>;
+  cases: Array<{ case_id: string; revision_id?: string; ordinal: number }>;
 }
 
 export interface SuiteRun {

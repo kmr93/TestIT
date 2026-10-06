@@ -32,6 +32,7 @@ export const EnvironmentsView: React.FC = () => {
   const [newConnName, setNewConnName] = useState('');
   const [newConnType, setNewConnType] = useState('mysql');
   const [newConnSettings, setNewConnSettings] = useState('{\n  "host": "localhost",\n  "port": 3306,\n  "database": "test_db"\n}');
+  const [newConnSecrets, setNewConnSecrets] = useState('{\n  "password_secret": "mysql_password"\n}');
 
   const [newSecretName, setNewSecretName] = useState('');
   const [newSecretValue, setNewSecretValue] = useState('');
@@ -77,6 +78,7 @@ export const EnvironmentsView: React.FC = () => {
         name: newConnName,
         connector_type: newConnType,
         settings: JSON.parse(newConnSettings),
+        secret_refs: JSON.parse(newConnSecrets),
       });
       setNewConnName('');
       loadAll();
@@ -287,6 +289,16 @@ export const EnvironmentsView: React.FC = () => {
                   className="input-field font-mono text-xs h-28 resize-none"
                   required
                 />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Encrypted Secret References (JSON)</label>
+                <textarea
+                  value={newConnSecrets}
+                  onChange={(e) => setNewConnSecrets(e.target.value)}
+                  className="input-field font-mono text-xs h-24 resize-none"
+                  required
+                />
+                <p className="mt-1 text-[10px] text-slate-500">Use adapter fields such as <code>password_secret</code> and reference a secret name or ID stored above.</p>
               </div>
               <button type="submit" className="btn btn-primary w-full text-xs py-2">
                 Save Profile

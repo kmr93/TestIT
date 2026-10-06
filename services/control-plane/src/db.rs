@@ -47,6 +47,12 @@ pub async fn run_migrations(pool: &DbPool) -> Result<(), anyhow::Error> {
     // Execute within a transaction or raw batch
     sqlx::raw_sql(migration_sql).execute(pool).await?;
 
+    let auth_migration = include_str!("../../../migrations/0002_auth_rate_limit.sql");
+    sqlx::raw_sql(auth_migration).execute(pool).await?;
+
+    let users_migration = include_str!("../../../migrations/0003_disabled_users.sql");
+    sqlx::raw_sql(users_migration).execute(pool).await?;
+
     info!("Database migrations applied successfully");
     Ok(())
 }

@@ -1,12 +1,23 @@
 const API_BASE = '/api/v1';
 
+function csrfToken(): string | undefined {
+  if (typeof document === 'undefined') return undefined;
+  const prefix = 'testit_csrf=';
+  const item = document.cookie.split(';').map((value) => value.trim()).find((value) => value.startsWith(prefix));
+  return item ? decodeURIComponent(item.slice(prefix.length)) : undefined;
+}
+
 export async function apiRequest<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  const headers = new Headers(options?.headers);
+  if (options?.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  if (options?.method && !['GET', 'HEAD', 'OPTIONS'].includes(options.method.toUpperCase())) {
+    const token = csrfToken();
+    if (token) headers.set('X-CSRF-Token', token);
+  }
   const res = await fetch(`${API_BASE}${endpoint}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
     ...options,
+    headers,
+    credentials: 'same-origin',
   });
 
   if (!res.ok) {
@@ -24,6 +35,16 @@ export async function apiRequest<T>(endpoint: string, options?: RequestInit): Pr
   return res.json();
 }
 
+export const login = (email: string, password: string) =>
+  apiRequest<any>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+export const logout = () => apiRequest<{ status: string }>('/auth/logout', { method: 'POST' });
+export const getCurrentUser = () => apiRequest<any>('/me');
+export const getUsers = () => apiRequest<any[]>('/admin/users');
+export const createUser = (data: { email: string; display_name: string; role: string; password: string }) =>
+  apiRequest<any>('/admin/users', { method: 'POST', body: JSON.stringify(data) });
+export const updateUser = (id: string, data: { display_name?: string; role?: string; active?: boolean; password?: string }) =>
+  apiRequest<any>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+
 // Assets
 export const getAssets = () => apiRequest<any[]>('/assets');
 export const createAsset = (data: { kind: string; name: string; description?: string; initial_draft?: any }) =>
@@ -34,6 +55,7 @@ export const updateAssetDraft = (id: string, data: { name?: string; description?
 export const publishAssetRevision = (id: string, data: { expected_draft_version: number; change_note?: string }) =>
   apiRequest<any>(`/assets/${id}/publish`, { method: 'POST', body: JSON.stringify(data) });
 export const getAssetRevisions = (id: string) => apiRequest<any[]>(`/assets/${id}/revisions`);
+export const getAssetRevision = (assetId: string, revisionId: string) => apiRequest<any>(`/assets/${assetId}/revisions/${revisionId}`);
 
 // Runs
 export const getRuns = () => apiRequest<any[]>('/runs');
@@ -46,7 +68,7 @@ export const rerunFailed = (id: string) => apiRequest<any>(`/runs/${id}/rerun-fa
 export const getRunComparison = (id: string) => apiRequest<any>(`/runs/${id}/comparison`);
 
 // Variables
-export const previewVariables = (data: { node_config: any; environment_id?: string; sample_inputs?: any; sample_iteration?: any }) =>
+export const previewVariables = (data: { node_config: any; environment_id?: string; sample_inputs?: any; sample_iteration?: any; suite_variables?: any; case_variables?: any }) =>
   apiRequest<any>('/variables/preview', { method: 'POST', body: JSON.stringify(data) });
 
 // Environments & Connections & Secrets

@@ -1,90 +1,53 @@
 # TestIT — Backend Automation Suite Builder
 
-TestIT is an early prototype for authoring backend test workflows across HTTP APIs, relational databases (MySQL, MariaDB), NoSQL databases (Cassandra, MongoDB), and tabular data files (Parquet, Delta Lake).
+TestIT is a desktop web application for authoring and running backend validation workflows. Its current implementation includes a Rust control plane, a React/TypeScript interface, a Python worker runtime, SQLite persistence, NATS outbox publication, and Docker Compose deployment.
 
-The repository includes a Rust control plane, React desktop UI, and Python worker adapters. It is not production-ready: authentication/RBAC and worker dispatch are incomplete, and run statuses must not be treated as evidence that checks executed. See [PROJECT_REVIEW.md](PROJECT_REVIEW.md) for the implementation review against `design/`.
+The editor supports ordered API, database, tabular-count, and wait steps; case setup/main/cleanup groups; bounded JSON/CSV iterations; suite composition; scoped variables; run monitoring; and HTML/JUnit/CSV exports. The design pack includes additional capabilities that are still in progress. See [PROJECT_REVIEW.md](PROJECT_REVIEW.md) and [IMPLEMENTATION_TRACKER.md](IMPLEMENTATION_TRACKER.md) for current coverage and verification.
 
----
+## Desktop support
 
-## 🏗️ Current component map
+The supported browser viewport starts at **1280 × 720**. The interface is designed for desktop use and does not target mobile layouts.
 
-```
-  Desktop web UI (React + TypeScript + Vite)
-                     |
-        Rust control plane (Axum + SQLite)
-             /                       \
-  NATS config/outbox code       Python worker adapters
-  (SSE still polls SQLite)      (not called by orchestrator)
-```
+## Start with Docker Compose
 
-This map describes code present in the repository. The NATS-to-SSE and control-plane-to-worker paths are not yet integrated end to end.
+Copy `.env.example` to `.env`, then replace the example master key, bootstrap administrator password, and worker-manager token with unique values before starting the stack. The master key must be 64 hexadecimal characters. The administrator password must meet the configured minimum. Back up the key securely; stored secrets cannot be decrypted without it.
 
----
-
-## 🚀 Quickstart with Docker (Primary Setup)
-
-Docker Compose is the development deployment target. It starts NATS, the Rust control plane, and the web UI; it does not currently prove end-to-end worker execution.
-
-Before the first launch, set `MASTER_KEY_HEX` to a unique 64-character hex key in your shell or ignored `.env` file. Keep the key backed up securely; losing it makes stored secrets unreadable. Compose now refuses to start without this value.
-
-### 1. Launch the Stack
-
-```bash
-# Build and start all services
+```sh
 docker compose up --build -d
 ```
 
-### 2. Access the Applications
+The default local addresses are:
 
-- **Web UI:** [http://localhost:3000](http://localhost:3000)
-- **API & Health:** [http://localhost:8080/health/ready](http://localhost:8080/health/ready)
-- **API Documentation & Endpoints:** `/api/v1/*`
+- Web interface: [http://localhost:3000](http://localhost:3000)
+- Readiness: [http://localhost:8080/health/ready](http://localhost:8080/health/ready)
+- Liveness: [http://localhost:8080/health/live](http://localhost:8080/health/live)
+- Prometheus metrics: [http://localhost:8080/metrics](http://localhost:8080/metrics)
 
-### 3. Check Health
+Sign in with the bootstrap administrator credentials configured in `.env`. Review the Compose configuration and network/worker target allow-list before exposing the stack beyond a local development machine.
 
-```bash
-curl http://localhost:8080/health/live
-curl http://localhost:8080/health/ready
-```
+## Local development
 
----
+```sh
+# Control plane
+cargo check --workspace --locked
 
-## 🛠️ Local Development Setup
-
-### Rust Control Plane
-```bash
-cd services/control-plane
-cargo check
-cargo test
-cargo run
-```
-
-### Web UI
-```bash
+# Web application
 cd apps/web
 npm ci
 npm run build
-npm run dev
+
+# Worker syntax validation
+cd ../..
+python -m compileall -q workers/python deploy/worker-manager
 ```
 
-### CI Command-Line Client (`testit-cli`)
-```bash
+The CLI can trigger and wait for a suite run against a running API:
+
+```sh
 cd apps/cli
-cargo run -- --server http://localhost:8080 run --suite <suite_revision_id> --env <env_id> --junit report.xml
+cargo run -- --server http://localhost:8080 run --suite <suite_revision_id> --env <environment_id> --junit report.xml
 ```
 
----
+## Current limits
 
-## Current implementation
-
-- The UI supports desktop browsers from 1280 × 720 and uses a keyboard-operable ordered-step editor. Graph editing is not implemented.
-- The Python worker contains a versioned protocol and connector adapters, but the Rust orchestrator does not call it yet.
-- Variable preview and AES-256-GCM secret encryption code exist. Authentication, authorization, and key rotation are not implemented.
-- HTML, JUnit, and CSV report endpoints exist; report and event-stream acceptance has not been verified end to end.
-
----
-
-## 📋 Implementation Tracker
-
-For live development status, verification records, and phase checklists, see:
-👉 [IMPLEMENTATION_TRACKER.md](IMPLEMENTATION_TRACKER.md)
+The current publishable runtime supports API requests, API wait-until polling, MySQL read checks, MongoDB read checks, bounded tabular row-count checks, and sleep. Branches, reusable cases, Cassandra/scripts, suite-level setup/teardown, resource locks, portable project bundles, backup/restore, retention, SMTP notifications, schedules, and signed webhooks remain open design work. Compose and real worker-engine execution must be verified in the intended Linux deployment environment before relying on the application for production checks.

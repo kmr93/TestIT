@@ -4,11 +4,17 @@ import { previewVariables } from '../api/client';
 
 interface VariablePreviewModalProps {
   nodeConfig: any;
+  environmentId?: string;
+  suiteVariables?: Record<string, any>;
+  caseVariables?: Record<string, any>;
   onClose: () => void;
 }
 
 export const VariablePreviewModal: React.FC<VariablePreviewModalProps> = ({
   nodeConfig,
+  environmentId,
+  suiteVariables,
+  caseVariables,
   onClose,
 }) => {
   const [sampleInputs, setSampleInputs] = useState('{\n  "order_id": "ORD-9901",\n  "amount": 250\n}');
@@ -23,12 +29,8 @@ export const VariablePreviewModal: React.FC<VariablePreviewModalProps> = ({
     try {
       let parsedInputs = {};
       let parsedIter = {};
-      try {
-        parsedInputs = JSON.parse(sampleInputs);
-      } catch (_) {}
-      try {
-        parsedIter = JSON.parse(sampleIteration);
-      } catch (_) {}
+      try { parsedInputs = JSON.parse(sampleInputs); } catch { throw new Error('Sample case inputs must be valid JSON.'); }
+      try { parsedIter = JSON.parse(sampleIteration); } catch { throw new Error('Sample iteration data must be valid JSON.'); }
 
       const res = await previewVariables({
         node_config: nodeConfig || {
@@ -40,6 +42,9 @@ export const VariablePreviewModal: React.FC<VariablePreviewModalProps> = ({
         },
         sample_inputs: parsedInputs,
         sample_iteration: parsedIter,
+        environment_id: environmentId,
+        suite_variables: suiteVariables,
+        case_variables: caseVariables,
       });
       setPreviewResult(res);
     } catch (err: any) {
@@ -124,6 +129,11 @@ export const VariablePreviewModal: React.FC<VariablePreviewModalProps> = ({
               <pre className="p-4 bg-slate-950 border border-slate-800 rounded-lg font-mono text-xs text-emerald-400 overflow-x-auto">
                 {JSON.stringify(previewResult.resolved_config, null, 2)}
               </pre>
+
+              {previewResult.errors?.length > 0 && <div role="alert" className="rounded-lg border border-rose-800 bg-rose-950/40 p-3 text-xs text-rose-200">
+                <h3 className="font-semibold">Preview resolution issues</h3>
+                <ul className="mt-1 list-disc space-y-1 pl-4">{previewResult.errors.map((item: string, index: number) => <li key={index}>{item}</li>)}</ul>
+              </div>}
 
               {previewResult.masked_secrets?.length > 0 && (
                 <div className="text-xs text-slate-400 flex items-center gap-2">

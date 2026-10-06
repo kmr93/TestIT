@@ -28,6 +28,7 @@ aes-gcm = "0.10"
 sha2 = "0.10"
 hex = "0.4"
 rand = "0.8"
+argon2 = "0.5"
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

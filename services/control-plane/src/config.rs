@@ -9,6 +9,12 @@ pub struct AppConfig {
     pub artifacts_dir: String,
     pub docker_worker_image: String,
     pub max_active_cases: usize,
+    pub bootstrap_admin_email: Option<String>,
+    pub bootstrap_admin_password: Option<String>,
+    pub cookie_secure: bool,
+    pub cors_allowed_origins: Vec<String>,
+    pub worker_manager_url: Option<String>,
+    pub worker_manager_token: Option<String>,
 }
 
 impl AppConfig {
@@ -44,6 +50,37 @@ impl AppConfig {
             .parse::<usize>()
             .unwrap_or(4);
 
+        let bootstrap_admin_email = env::var("BOOTSTRAP_ADMIN_EMAIL")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        let bootstrap_admin_password = env::var("BOOTSTRAP_ADMIN_PASSWORD")
+            .ok()
+            .filter(|value| !value.is_empty());
+        let cookie_secure = env::var("COOKIE_SECURE")
+            .unwrap_or_else(|_| "true".to_string())
+            .parse::<bool>()?;
+        let cors_allowed_origins = env::var("CORS_ALLOWED_ORIGINS")
+            .unwrap_or_else(|_| "http://localhost:3000,http://127.0.0.1:3000".to_string())
+            .split(',')
+            .map(str::trim)
+            .filter(|origin| !origin.is_empty())
+            .map(ToOwned::to_owned)
+            .collect();
+        let worker_manager_url = env::var("WORKER_MANAGER_URL")
+            .ok()
+            .map(|value| value.trim_end_matches('/').to_string())
+            .filter(|value| !value.is_empty());
+        let worker_manager_token = env::var("WORKER_MANAGER_TOKEN")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        if worker_manager_url.is_some()
+            && worker_manager_token
+                .as_ref()
+                .is_none_or(|token| token.len() < 64)
+        {
+            anyhow::bail!("WORKER_MANAGER_TOKEN must be a unique 64-character value when WORKER_MANAGER_URL is configured");
+        }
+
         Ok(Self {
             port,
             database_url,
@@ -52,6 +89,12 @@ impl AppConfig {
             artifacts_dir,
             docker_worker_image,
             max_active_cases,
+            bootstrap_admin_email,
+            bootstrap_admin_password,
+            cookie_secure,
+            cors_allowed_origins,
+            worker_manager_url,
+            worker_manager_token,
         })
     }
 }

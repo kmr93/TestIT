@@ -15,9 +15,11 @@ import { InlineAlert } from './InlineAlert';
 
 interface RunsViewProps {
   onSelectRun: (runId: string) => void;
+  userRole: string;
 }
 
-export const RunsView: React.FC<RunsViewProps> = ({ onSelectRun }) => {
+export const RunsView: React.FC<RunsViewProps> = ({ onSelectRun, userRole }) => {
+  const canRerun = userRole === 'ADMIN' || userRole === 'RUNNER';
   const [runs, setRuns] = useState<SuiteRun[]>([]);
   const [comparisonModalData, setComparisonModalData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -121,7 +123,7 @@ export const RunsView: React.FC<RunsViewProps> = ({ onSelectRun }) => {
                         <GitCompare className="w-3 h-3 text-indigo-400" />
                         Compare
                       </button>
-                      {r.status === 'FAILED' && (
+                      {canRerun && r.status === 'FAILED' && (
                         <button
                           onClick={(e) => handleRerun(r.id, e)}
                           className="btn btn-secondary text-[11px] py-1 px-2.5 flex items-center gap-1 hover:border-amber-500"

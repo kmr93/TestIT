@@ -10,21 +10,32 @@ import {
   FileCode,
   FileText,
 } from 'lucide-react';
-import { cancelRun } from '../api/client';
+import { cancelRun, getRunStats } from '../api/client';
 
 interface LiveRunMonitorProps {
   runId: string;
   onClose: () => void;
+  userRole: string;
 }
 
-export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose }) => {
+export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose, userRole }) => {
+  const canCancel = userRole === 'ADMIN' || userRole === 'RUNNER';
   const [snapshot, setSnapshot] = useState<any>(null);
   const [events, setEvents] = useState<any[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [status, setStatus] = useState<string>('QUEUED');
+  const [monitorError, setMonitorError] = useState<string | null>(null);
 
   useEffect(() => {
     const sse = new EventSource(`/api/v1/runs/${runId}/events`);
+    const refreshStats = () => {
+      void getRunStats(runId).then((latest) => {
+        setSnapshot(latest);
+        setStatus(latest.status);
+      }).catch(() => {});
+    };
+    refreshStats();
+    const polling = window.setInterval(refreshStats, 2000);
 
     sse.onopen = () => {
       setIsConnected(true);
@@ -38,15 +49,15 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose }
       } catch (_) {}
     });
 
-    sse.addEventListener('run.started', (e: MessageEvent) => {
-      setStatus('RUNNING');
-      setEvents((prev) => [...prev, { type: 'run.started', data: JSON.parse(e.data) }]);
-    });
-
-    sse.addEventListener('step.finished', (e: MessageEvent) => {
-      const data = JSON.parse(e.data);
-      setEvents((prev) => [...prev, { type: 'step.finished', data }]);
-    });
+    const trackEvent = (type: string) => (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (type === 'run.started') setStatus('RUNNING');
+        setEvents((prev) => [...prev.slice(-99), { type, data }]);
+      } catch (_) {}
+    };
+    ['run.started', 'run.planned', 'case.started', 'case.finished', 'step.started', 'step.finished']
+      .forEach((type) => sse.addEventListener(type, trackEvent(type)));
 
     sse.addEventListener('run.finished', (e: MessageEvent) => {
       const data = JSON.parse(e.data);
@@ -54,6 +65,7 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose }
       setEvents((prev) => [...prev, { type: 'run.finished', data }]);
       sse.close();
       setIsConnected(false);
+      refreshStats();
     });
 
     sse.onerror = () => {
@@ -61,6 +73,7 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose }
     };
 
     return () => {
+      window.clearInterval(polling);
       sse.close();
     };
   }, [runId]);
@@ -69,7 +82,14 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose }
     try {
       await cancelRun(runId);
       setStatus('CANCELED');
-    } catch (_) {}
+      refreshAfterCancel();
+    } catch (error) {
+      setMonitorError(error instanceof Error ? error.message : 'Unable to cancel this run.');
+    }
+  };
+
+  const refreshAfterCancel = () => {
+    void getRunStats(runId).then(setSnapshot).catch(() => {});
   };
 
   const snapshotPercent = snapshot?.progress?.percent;
@@ -102,7 +122,7 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose }
         </div>
 
         <div className="flex items-center gap-2">
-          {status === 'RUNNING' && (
+          {canCancel && status === 'RUNNING' && (
             <button onClick={handleCancel} className="btn btn-danger text-xs py-1.5 px-3">
               <Ban className="w-3.5 h-3.5" />
               Cancel Run
@@ -142,6 +162,8 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose }
         </div>
       </div>
 
+      {monitorError && <div role="alert" className="rounded-lg border border-rose-800 bg-rose-950/50 px-3 py-2 text-xs text-rose-200">{monitorError}</div>}
+
       {/* Progress Bar */}
       <div>
         <div className="flex justify-between text-xs font-medium text-slate-300 mb-2">
@@ -157,6 +179,26 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose }
           />
         </div>
       </div>
+
+      <div className="grid grid-cols-4 gap-3" aria-label="Live run counts">
+        <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Cases</div>
+          <div className="mt-1 font-mono text-sm text-slate-100">{snapshot?.stats?.cases_completed ?? 0} / {snapshot?.stats?.cases_total ?? '—'}</div>
+        </div>
+        {['passed', 'failed', 'error'].map((name) => (
+          <div key={name} className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{name}</div>
+            <div className="mt-1 font-mono text-sm text-slate-100">{snapshot?.stats?.case_counts?.[name] ?? 0}</div>
+          </div>
+        ))}
+      </div>
+      {(snapshot?.stats?.current_case || snapshot?.stats?.current_step) && (
+        <div className="rounded-lg border border-indigo-900/70 bg-indigo-950/30 px-4 py-3 text-xs text-slate-300">
+          Active case <span className="font-mono text-indigo-200">{snapshot?.stats?.current_case || '—'}</span>
+          <span className="mx-2 text-slate-600">·</span>
+          Current step <span className="font-medium text-indigo-200">{snapshot?.stats?.current_step || '—'}</span>
+        </div>
+      )}
 
       {/* Real-time Timeline Events */}
       <div>

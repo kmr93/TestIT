@@ -1,9 +1,9 @@
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, Extension, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::AppState;
+use crate::{api::auth::AuthenticatedUser, AppState};
 
 #[derive(Deserialize)]
 pub struct ValidateOpenApiRequest {
@@ -16,9 +16,7 @@ pub struct ImportOpenApiRequest {
     pub selected_operation_ids: Vec<String>,
 }
 
-pub async fn validate_openapi(
-    Json(payload): Json<ValidateOpenApiRequest>,
-) -> impl IntoResponse {
+pub async fn validate_openapi(Json(payload): Json<ValidateOpenApiRequest>) -> impl IntoResponse {
     let parsed: Value = match serde_json::from_str(&payload.spec_content) {
         Ok(v) => v,
         Err(_) => {
@@ -57,7 +55,11 @@ pub async fn validate_openapi(
                             .and_then(|id| id.as_str())
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| {
-                                format!("{}_{}", method_upper.to_lowercase(), path_str.replace('/', "_"))
+                                format!(
+                                    "{}_{}",
+                                    method_upper.to_lowercase(),
+                                    path_str.replace('/', "_")
+                                )
                             });
 
                         let summary = op_obj
@@ -91,6 +93,7 @@ pub async fn validate_openapi(
 
 pub async fn import_openapi(
     State(state): State<AppState>,
+    Extension(user): Extension<AuthenticatedUser>,
     Json(payload): Json<ImportOpenApiRequest>,
 ) -> impl IntoResponse {
     let parsed: Value = match serde_json::from_str(&payload.spec_content) {
@@ -115,7 +118,11 @@ pub async fn import_openapi(
                         .and_then(|id| id.as_str())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| {
-                            format!("{}_{}", method_upper.to_lowercase(), path_str.replace('/', "_"))
+                            format!(
+                                "{}_{}",
+                                method_upper.to_lowercase(),
+                                path_str.replace('/', "_")
+                            )
                         });
 
                     if payload.selected_operation_ids.contains(&op_id) {
@@ -141,9 +148,10 @@ pub async fn import_openapi(
                         let now = chrono::Utc::now().to_rfc3339();
                         let _ = sqlx::query(
                             "INSERT INTO assets (id, workspace_id, kind, name, description, draft_json, draft_version, created_at, updated_at)
-                             VALUES (?, '00000000-0000-0000-0000-000000000001', 'template', ?, ?, ?, 1, ?, ?)"
+                             VALUES (?, ?, 'template', ?, ?, ?, 1, ?, ?)"
                         )
                         .bind(&template_id)
+                        .bind(&user.workspace_id)
                         .bind(format!("OpenAPI: {}", summary))
                         .bind(format!("Auto-generated from operation {}", op_id))
                         .bind(template_node.to_string())
