@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="TestIT Suite Run" tests="1" failures="0" time="1.0">
+  <testsuite name="Suite-0866517b-e5b2-4ca6-b206-32f70ef113b3" tests="1" failures="0" time="1.0">
+    <testcase classname="Suite-0866517b-e5b2-4ca6-b206-32f70ef113b3" name="Run-2d885730-981e-4852-9815-ff68f1dc23c1" time="1.0">
+      
+    </testcase>
+  </testsuite>
+</testsuites>

@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for TestIT Rust Control Plane
-FROM rust:1.80-slim-bookworm AS builder
+FROM rust:slim-bookworm AS builder
 
 WORKDIR /app
 
