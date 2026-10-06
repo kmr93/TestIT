@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://testit.dev/schemas/worker-envelope.schema.json",
+  "title": "TestIT Worker Invocation and Result Protocol",
+  "description": "Strict NDJSON envelope definitions for Python worker isolation boundaries",
+  "definitions": {
+    "InvocationEnvelope": {
+      "type": "object",
+      "required": ["schema_version", "run_id", "case_id", "step_id", "node_type", "deadline_utc"],
+      "properties": {
+        "schema_version": { "type": "integer", "const": 1 },
+        "run_id": { "type": "string", "format": "uuid" },
+        "case_id": { "type": "string", "format": "uuid" },
+        "step_id": { "type": "string", "format": "uuid" },
+        "attempt": { "type": "integer", "minimum": 1, "default": 1 },
+        "deadline_utc": { "type": "string", "format": "date-time" },
+        "node_type": { "type": "string" },
+        "node_type_version": { "type": "integer", "minimum": 1, "default": 1 },
+        "config": { "type": "object", "default": {} },
+        "inputs": { "type": "object", "default": {} },
+        "secrets": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "default": {}
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "max_output_bytes": { "type": "integer", "default": 1048576 },
+            "max_log_bytes": { "type": "integer", "default": 524288 },
+            "timeout_seconds": { "type": "integer", "default": 30 }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProgressFrame": {
+      "type": "object",
+      "required": ["frame_type", "step_id", "phase", "timestamp_utc"],
+      "properties": {
+        "frame_type": { "type": "string", "const": "progress" },
+        "step_id": { "type": "string", "format": "uuid" },
+        "phase": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "counters": {
+          "type": "object",
+          "additionalProperties": { "type": "number" },
+          "default": {}
+        },
+        "timestamp_utc": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "ResultEnvelope": {
+      "type": "object",
+      "required": ["frame_type", "step_id", "status", "metrics"],
+      "properties": {
+        "frame_type": { "type": "string", "const": "result" },
+        "step_id": { "type": "string", "format": "uuid" },
+        "status": {
+          "type": "string",
+          "enum": ["SUCCEEDED", "ASSERTION_FAILED", "ERROR", "TIMED_OUT", "CANCELED"]
+        },
+        "error": {
+          "type": "object",
+          "required": ["code", "message", "class"],
+          "properties": {
+            "code": { "type": "string" },
+            "message": { "type": "string" },
+            "class": {
+              "type": "string",
+              "enum": ["ASSERTION", "TRANSIENT_NETWORK", "TIMEOUT", "AUTH", "CLIENT_ERROR", "SERVER_ERROR", "INTERNAL"]
+            },
+            "details": { "type": "object", "default": {} }
+          }
+        },
+        "outputs": {
+          "type": "object",
+          "default": {}
+        },
+        "metrics": {
+          "type": "object",
+          "required": ["duration_ms"],
+          "properties": {
+            "duration_ms": { "type": "number", "minimum": 0 },
+            "status_code": { "type": "integer" },
+            "row_count": { "type": "integer" },
+            "bytes_transferred": { "type": "integer" }
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "path", "mime_type", "size_bytes"],
+            "properties": {
+              "name": { "type": "string" },
+              "path": { "type": "string" },
+              "mime_type": { "type": "string" },
+              "size_bytes": { "type": "integer" }
+            }
+          },
+          "default": []
+        },
+        "redacted_keys": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/definitions/InvocationEnvelope" },
+    { "$ref": "#/definitions/ProgressFrame" },
+    { "$ref": "#/definitions/ResultEnvelope" }
+  ]
+}

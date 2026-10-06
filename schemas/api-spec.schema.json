@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://testit.dev/schemas/api-spec.schema.json",
+  "title": "TestIT OpenAPI Normalization Schema",
+  "description": "Normalized structure for imported OpenAPI operations and generated request templates",
+  "type": "object",
+  "required": ["spec_version", "title", "operations"],
+  "properties": {
+    "spec_version": { "type": "string" },
+    "title": { "type": "string" },
+    "description": { "type": "string" },
+    "base_url": { "type": "string" },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["operation_id", "method", "path"],
+        "properties": {
+          "operation_id": { "type": "string" },
+          "summary": { "type": "string" },
+          "method": {
+            "type": "string",
+            "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+          },
+          "path": { "type": "string" },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "in"],
+              "properties": {
+                "name": { "type": "string" },
+                "in": { "type": "string", "enum": ["query", "header", "path"] },
+                "required": { "type": "boolean", "default": false },
+                "schema": { "type": "object" },
+                "description": { "type": "string" }
+              }
+            }
+          },
+          "request_body": {
+            "type": "object",
+            "properties": {
+              "content_type": { "type": "string" },
+              "schema": { "type": "object" },
+              "example": {}
+            }
+          },
+          "responses": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "description": { "type": "string" },
+                "schema": { "type": "object" }
+              }
+            }
+          },
+          "security": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

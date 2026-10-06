@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://testit.dev/schemas/variables/variable-catalog.schema.json",
+  "title": "TestIT Typed Variable & Function Catalog Schema",
+  "description": "Deterministic, sandboxed variable and built-in function catalog definition",
+  "definitions": {
+    "VariableType": {
+      "type": "string",
+      "enum": ["string", "integer", "decimal", "boolean", "object", "array", "datetime", "secret_ref"]
+    },
+    "FunctionArgument": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "$ref": "#/definitions/VariableType" },
+        "required": { "type": "boolean", "default": true },
+        "default": {}
+      }
+    },
+    "FunctionDefinition": {
+      "type": "object",
+      "required": ["id", "category", "return_type", "description"],
+      "properties": {
+        "id": { "type": "string" },
+        "category": {
+          "type": "string",
+          "enum": ["context", "generator", "string", "numeric", "datetime", "structured"]
+        },
+        "description": { "type": "string" },
+        "return_type": { "$ref": "#/definitions/VariableType" },
+        "parameters": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/FunctionArgument" },
+          "default": []
+        },
+        "is_deterministic": { "type": "boolean", "default": true }
+      }
+    },
+    "CustomVariableDefinition": {
+      "type": "object",
+      "required": ["name", "type", "scope"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "scope": {
+          "type": "string",
+          "enum": ["env", "suite", "case", "iteration"]
+        },
+        "type": { "$ref": "#/definitions/VariableType" },
+        "literal_value": {},
+        "expression": {
+          "type": "object",
+          "properties": {
+            "function_id": { "type": "string" },
+            "arguments": {
+              "type": "array",
+              "items": {}
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "required": ["catalog_version", "functions"],
+  "properties": {
+    "catalog_version": { "type": "string" },
+    "functions": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/FunctionDefinition" }
+    }
+  }
+}

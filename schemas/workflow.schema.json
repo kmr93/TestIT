@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://testit.dev/schemas/workflow.schema.json",
+  "title": "TestIT Workflow Schema",
+  "description": "Authoritative schema for TestIT Suites, Test Cases, and Node Instances",
+  "definitions": {
+    "UUID": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "TypedValue": {
+      "type": "object",
+      "required": ["type", "value"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["string", "integer", "decimal", "boolean", "object", "array", "datetime", "secret_ref"]
+        },
+        "value": {}
+      },
+      "additionalProperties": false
+    },
+    "VariableRef": {
+      "type": "object",
+      "required": ["scope", "path"],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": ["sys", "env", "suite", "case", "iteration", "step"]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "RetryPolicy": {
+      "type": "object",
+      "required": ["max_attempts"],
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5,
+          "default": 0
+        },
+        "delay_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 60,
+          "default": 1
+        },
+        "backoff_multiplier": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 2
+        },
+        "allowed_error_classes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["TRANSIENT_NETWORK", "TIMEOUT"]
+        },
+        "is_idempotent": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "NodeInstance": {
+      "type": "object",
+      "required": ["id", "type", "type_version", "name", "timeout_seconds"],
+      "properties": {
+        "id": { "$ref": "#/definitions/UUID" },
+        "type": {
+          "type": "string",
+          "enum": [
+            "api.request",
+            "db.mysql",
+            "db.cassandra",
+            "db.mongodb",
+            "data.tabular",
+            "script.python",
+            "script.shell",
+            "sleep.wait",
+            "condition.branch",
+            "case.call"
+          ]
+        },
+        "type_version": { "type": "integer", "minimum": 1, "default": 1 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "config": {
+          "type": "object",
+          "default": {}
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              { "$ref": "#/definitions/TypedValue" },
+              { "$ref": "#/definitions/VariableRef" }
+            ]
+          },
+          "default": {}
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600,
+          "default": 30
+        },
+        "retry_policy": {
+          "$ref": "#/definitions/RetryPolicy"
+        },
+        "position": {
+          "type": "object",
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" }
+          },
+          "required": ["x", "y"]
+        },
+        "on_error": {
+          "type": "string",
+          "enum": ["fail", "branch_to_handler", "continue"],
+          "default": "fail"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Edge": {
+      "type": "object",
+      "required": ["source", "target"],
+      "properties": {
+        "id": { "type": "string" },
+        "source": { "$ref": "#/definitions/UUID" },
+        "target": { "$ref": "#/definitions/UUID" },
+        "condition": {
+          "type": "object",
+          "properties": {
+            "expression": { "type": "string" },
+            "label": { "type": "string" }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "TestCaseDefinition": {
+      "type": "object",
+      "required": ["id", "name", "nodes", "edges"],
+      "properties": {
+        "id": { "$ref": "#/definitions/UUID" },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "default": "" },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/TypedValue" },
+          "default": {}
+        },
+        "outputs": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "default": {}
+        },
+        "setup_nodes": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/NodeInstance" },
+          "default": []
+        },
+        "nodes": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/NodeInstance" }
+        },
+        "edges": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Edge" }
+        },
+        "cleanup_nodes": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/NodeInstance" },
+          "default": []
+        },
+        "dataset_ref": {
+          "type": "object",
+          "properties": {
+            "dataset_id": { "$ref": "#/definitions/UUID" },
+            "dataset_revision": { "type": "integer" },
+            "max_rows": { "type": "integer", "maximum": 5000, "default": 100 }
+          }
+        },
+        "exclusive_resources": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "SuiteCaseReference": {
+      "type": "object",
+      "required": ["case_id"],
+      "properties": {
+        "case_id": { "$ref": "#/definitions/UUID" },
+        "revision_id": { "$ref": "#/definitions/UUID" },
+        "ordinal": { "type": "integer", "minimum": 0 },
+        "input_mappings": {
+          "type": "object",
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "TestSuiteDefinition": {
+      "type": "object",
+      "required": ["id", "name", "cases"],
+      "properties": {
+        "id": { "$ref": "#/definitions/UUID" },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "default": "" },
+        "default_environment_id": { "$ref": "#/definitions/UUID" },
+        "execution_mode": {
+          "type": "string",
+          "enum": ["sequential", "parallel"],
+          "default": "sequential"
+        },
+        "cases": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/SuiteCaseReference" }
+        },
+        "setup_nodes": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/NodeInstance" },
+          "default": []
+        },
+        "cleanup_nodes": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/NodeInstance" },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/definitions/TestSuiteDefinition" },
+    { "$ref": "#/definitions/TestCaseDefinition" },
+    { "$ref": "#/definitions/NodeInstance" }
+  ]
+}

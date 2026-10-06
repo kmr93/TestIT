@@ -1,0 +1,36 @@
+# Rust
+/target/
+services/control-plane/target/
+apps/cli/target/
+**/*.rs.bk
+Cargo.lock
+
+# Node / Web
+node_modules/
+dist/
+.npm/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# SQLite & local runtime
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+data/
+artifacts/
+
+# Secrets & environment
+.env
+.env.local
+master.key
+
+# OS
+.DS_Store
+Thumbs.db

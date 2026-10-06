@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  nats:
+    image: nats:2.10-alpine
+    container_name: testit-nats
+    restart: unless-stopped
+    command: ["-c", "/etc/nats/nats-server.conf"]
+    volumes:
+      - ./deploy/nats/nats-server.conf:/etc/nats/nats-server.conf:ro
+    networks:
+      - internal-bus
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/varz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  control-plane:
+    build:
+      context: .
+      dockerfile: services/control-plane/Dockerfile
+    container_name: testit-control-plane
+    restart: unless-stopped
+    depends_on:
+      nats:
+        condition: service_healthy
+    environment:
+      - RUST_LOG=info,testit_control_plane=debug
+      - PORT=8080
+      - DATABASE_URL=sqlite:///data/db/testit.sqlite?mode=rwc
+      - NATS_URL=nats://nats:4222
+      - ARTIFACTS_DIR=/data/artifacts
+      - MASTER_KEY_HEX=${MASTER_KEY_HEX:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      - DOCKER_WORKER_IMAGE=${DOCKER_WORKER_IMAGE:-testit-worker:latest}
+      - HOST_ARTIFACTS_PATH=${HOST_ARTIFACTS_PATH:-./data/artifacts}
+      - WORKER_NETWORK=testit-worker-net
+      - MAX_ACTIVE_CASES=4
+    volumes:
+      - testit-db:/data/db
+      - testit-artifacts:/data/artifacts
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8080:8080"
+    networks:
+      - internal-bus
+      - frontend-net
+      - worker-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: testit-web
+    restart: unless-stopped
+    depends_on:
+      - control-plane
+    ports:
+      - "3000:80"
+    networks:
+      - frontend-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+networks:
+  internal-bus:
+    internal: true
+    name: testit-internal-bus
+  frontend-net:
+    name: testit-frontend-net
+  worker-net:
+    name: testit-worker-net
+    internal: false
+
+volumes:
+  testit-db:
+    name: testit-db
+  testit-artifacts:
+    name: testit-artifacts

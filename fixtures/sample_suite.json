@@ -1,0 +1,70 @@
+{
+  "id": "e0000000-0000-0000-0000-000000000001",
+  "name": "E2E Order Processing & Ingestion Suite",
+  "description": "Production-grade backend test suite verifying HTTP APIs, database assertions, and polling conditions",
+  "execution_mode": "sequential",
+  "default_environment_id": "00000000-0000-0000-0000-000000000001",
+  "cases": [
+    {
+      "case_id": "c0000000-0000-0000-0000-000000000001",
+      "ordinal": 0,
+      "name": "Customer Account & Health API Verification",
+      "nodes": [
+        {
+          "id": "n0000000-0000-0000-0000-000000000001",
+          "type": "api.request",
+          "type_version": 1,
+          "name": "Verify Gateway Health",
+          "timeout_seconds": 15,
+          "config": {
+            "method": "GET",
+            "path": "https://httpbin.org/get",
+            "headers": {
+              "Accept": "application/json"
+            },
+            "expected_status": 200
+          },
+          "inputs": {},
+          "position": { "x": 100, "y": 100 },
+          "on_error": "fail"
+        },
+        {
+          "id": "n0000000-0000-0000-0000-000000000002",
+          "type": "sleep.wait",
+          "type_version": 1,
+          "name": "Wait for Event Propagation",
+          "timeout_seconds": 10,
+          "config": {
+            "duration_seconds": 2
+          },
+          "position": { "x": 100, "y": 250 },
+          "on_error": "continue"
+        },
+        {
+          "id": "n0000000-0000-0000-0000-000000000003",
+          "type": "db.mysql",
+          "type_version": 1,
+          "name": "Assert Read Database Count",
+          "timeout_seconds": 20,
+          "config": {
+            "query": "SELECT COUNT(*) as count FROM users WHERE active = 1",
+            "expected_min_rows": 1,
+            "max_rows": 10
+          },
+          "position": { "x": 100, "y": 400 },
+          "on_error": "fail"
+        }
+      ],
+      "edges": [
+        {
+          "source": "n0000000-0000-0000-0000-000000000001",
+          "target": "n0000000-0000-0000-0000-000000000002"
+        },
+        {
+          "source": "n0000000-0000-0000-0000-000000000002",
+          "target": "n0000000-0000-0000-0000-000000000003"
+        }
+      ]
+    }
+  ]
+}
