@@ -96,14 +96,18 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
     <div className="flex-1 bg-slate-950/60 rounded-xl border border-slate-800 p-6 flex flex-col justify-between overflow-y-auto">
       <div>
         {/* Canvas Toolbar */}
-        <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-800">
-          {!readOnly && <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-              Nodes in Case ({nodes.length})
-            </span>
-          </div>}
+        <div className="mb-6 border-b border-slate-800 pb-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                {readOnly ? 'Workflow steps' : 'Node library'}
+              </span>
+              <p className="mt-1 text-[11px] text-slate-500">{nodes.length} step{nodes.length === 1 ? '' : 's'} in this phase</p>
+            </div>
+            {!readOnly && <span className="text-right text-[10px] text-slate-500">Select a step, then reorder it with the arrow controls</span>}
+          </div>
 
-          <div className="flex items-center gap-2">
+          {!readOnly && <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               onClick={() => addNode('api.request', 'HTTP API Request')}
               className="btn btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5 hover:border-sky-500/50"
@@ -153,7 +157,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
               <Plus className="w-3.5 h-3.5 text-purple-400" />
               Wait Condition
             </button>
-          </div>
+          </div>}
         </div>
 
         {/* Nodes Sequence Canvas */}
@@ -162,7 +166,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
             <Globe className="w-10 h-10 mb-2 stroke-1 text-slate-600" />
             <p className="text-sm font-medium">No nodes added to this workflow yet</p>
             <p className="text-xs text-slate-600 mt-1">
-              Select a node type from the toolbar above to start assembling.
+              {readOnly ? 'This workflow does not contain any steps.' : 'Choose a node from the library above to start assembling.'}
             </p>
           </div>
         ) : (

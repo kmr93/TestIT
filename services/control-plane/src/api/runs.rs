@@ -6,7 +6,8 @@ use axum::{
 };
 use chrono::Utc;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
+use sqlx::Row;
 use uuid::Uuid;
 
 use crate::{
@@ -395,13 +396,119 @@ pub async fn get_run_stats(
             let progress_val: Value =
                 serde_json::from_str(&snap.progress_json).unwrap_or(json!({}));
             let stats_val: Value = serde_json::from_str(&snap.stats_json).unwrap_or(json!({}));
+
+            let run = sqlx::query(
+                "SELECT runs.created_at, runs.started_at, runs.finished_at,
+                        runs.environment_id, environments.name AS environment_name,
+                        assets.name AS suite_name, revisions.version AS suite_revision,
+                        users.display_name AS initiated_by
+                 FROM suite_runs runs
+                 JOIN asset_revisions revisions ON revisions.id = runs.suite_revision_id
+                 JOIN assets ON assets.id = revisions.asset_id
+                 JOIN environments ON environments.id = runs.environment_id
+                 LEFT JOIN users ON users.id = runs.initiating_user_id
+                 WHERE runs.id = ? AND runs.workspace_id = ?",
+            )
+            .bind(&run_id)
+            .bind(&user.workspace_id)
+            .fetch_optional(&state.db)
+            .await;
+            let run = match run {
+                Ok(Some(run)) => run,
+                Ok(None) => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(json!({ "error": "Run not found" })),
+                    );
+                }
+                Err(error) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": error.to_string() })),
+                    );
+                }
+            };
+            let started_at: Option<String> = run.try_get("started_at").unwrap_or(None);
+            let finished_at: Option<String> = run.try_get("finished_at").unwrap_or(None);
+            let created_at: String = run.try_get("created_at").unwrap_or_default();
+            let start = started_at.as_deref().unwrap_or(&created_at);
+            let end = finished_at
+                .as_deref()
+                .and_then(parse_utc_timestamp)
+                .unwrap_or_else(Utc::now);
+            let elapsed_seconds = parse_utc_timestamp(start)
+                .map(|start| (end - start).num_milliseconds().max(0) as f64 / 1000.0)
+                .unwrap_or(0.0);
+
+            let metric_rows = sqlx::query_scalar::<_, String>(
+                "SELECT steps.metrics_json
+                 FROM step_runs steps
+                 JOIN case_runs cases ON cases.id = steps.case_run_id
+                 WHERE cases.suite_run_id = ? AND steps.node_type = 'api.request'
+                   AND steps.metrics_json IS NOT NULL",
+            )
+            .bind(&run_id)
+            .fetch_all(&state.db)
+            .await;
+            let metric_rows = match metric_rows {
+                Ok(rows) => rows,
+                Err(error) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": error.to_string() })),
+                    );
+                }
+            };
+            let mut latencies = Vec::new();
+            let mut status_classes = Map::new();
+            let mut api_requests = 0usize;
+            for row in metric_rows {
+                let Ok(metrics) = serde_json::from_str::<Value>(&row) else {
+                    continue;
+                };
+                api_requests += 1;
+                if let Some(duration) = metrics.get("duration_ms").and_then(Value::as_f64) {
+                    if duration.is_finite() && duration >= 0.0 {
+                        latencies.push(duration);
+                    }
+                }
+                if let Some(code) = metrics.get("status_code").and_then(Value::as_u64) {
+                    let class = format!("{}xx", code / 100);
+                    let count = status_classes
+                        .get(&class)
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                        + 1;
+                    status_classes.insert(class, json!(count));
+                }
+            }
+            latencies.sort_by(f64::total_cmp);
+            let api_statistics = json!({
+                "requests": api_requests,
+                "status_classes": status_classes,
+                "p50_ms": percentile(&latencies, 0.50),
+                "p95_ms": percentile(&latencies, 0.95),
+                "requests_per_minute": if elapsed_seconds > 0.0 { Some(api_requests as f64 * 60.0 / elapsed_seconds) } else { None }
+            });
             (
                 StatusCode::OK,
                 Json(json!({
                     "run_id": snap.suite_run_id,
                     "status": snap.status,
+                    "run": {
+                        "suite_name": run.try_get::<String, _>("suite_name").unwrap_or_default(),
+                        "suite_revision": run.try_get::<i64, _>("suite_revision").unwrap_or_default(),
+                        "environment_id": run.try_get::<String, _>("environment_id").unwrap_or_default(),
+                        "environment_name": run.try_get::<String, _>("environment_name").unwrap_or_default(),
+                        "initiated_by": run.try_get::<Option<String>, _>("initiated_by").unwrap_or(None),
+                        "created_at": created_at,
+                        "started_at": started_at,
+                        "finished_at": finished_at,
+                        "elapsed_seconds": elapsed_seconds
+                    },
                     "progress": progress_val,
                     "stats": stats_val,
+                    "api_statistics": api_statistics,
                     "last_sequence": snap.last_sequence,
                     "updated_at": snap.updated_at
                 })),
@@ -416,6 +523,22 @@ pub async fn get_run_stats(
             Json(json!({ "error": e.to_string() })),
         ),
     }
+}
+
+fn parse_utc_timestamp(value: &str) -> Option<chrono::DateTime<Utc>> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|timestamp| timestamp.with_timezone(&Utc))
+}
+
+fn percentile(values: &[f64], percentile: f64) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    let index = ((values.len() as f64 * percentile).ceil() as usize)
+        .saturating_sub(1)
+        .min(values.len() - 1);
+    Some(values[index])
 }
 
 pub async fn cancel_run(

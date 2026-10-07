@@ -14,8 +14,9 @@
 - Added suite-level setup and cleanup hooks to the suite editor and executor. Setup outputs are available to case iterations; cleanup is attempted after setup or case failure and cancellation. Hooks have their own visible run/report scope, and planned steps that do not start are persisted as skipped.
 - Added Cassandra connection profiles, verified-TLS read-only CQL checks and wait-until polling, with bound parameters, row/output bounds, selected columns, and isolated-worker egress validation.
 - Reworked OpenAPI JSON import to validate bounded 3.0/3.1 documents, reject remote references, retain local parameters and JSON schemas, create editable case drafts instead of orphan templates, preserve the source checksum/version, and audit transactional imports. Imported requests now expose path/query parameters and validate request/response bodies against their schemas.
+- Rebuilt the run monitor as a full desktop report surface with overview, timeline, and statistics tabs; exact case/node progress, live/polling/stale connection state, elapsed/run metadata, status counters, and API status/latency aggregates. The workflow node library now wraps at the supported desktop width and is hidden for read-only users.
 - Bundles do not include run history, reports/artifacts, scripts, or a SQLite snapshot. The importer currently accepts the uncompressed ZIP format produced by this application; external deflated ZIPs are not accepted.
-- Current verification for this pass: `cargo fmt --all`, `cargo check --workspace --locked`, `cargo check --tests --workspace --locked`, `npm run build`, and `git diff --check` passed. Rust runtime tests, Docker/Compose execution, and browser interaction were not run.
+- Current verification for this pass: `cargo fmt --all -- --check`, `cargo check --tests --workspace --locked`, `npm run build`, `python -m compileall -q workers/python deploy/worker-manager`, and `git diff --check` passed. Rust runtime tests, Docker/Compose execution, and browser interaction were not run.
 
 ## Implemented in the current tree
 

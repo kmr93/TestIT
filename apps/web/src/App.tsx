@@ -73,8 +73,8 @@ export const App: React.FC = () => {
 
       {/* Live Run Monitor Drawer / Modal */}
       {activeRunId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6">
-          <div className="w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <div role="dialog" aria-modal="true" aria-label="Run details" className="fixed inset-0 z-50 bg-slate-950/95 p-3 backdrop-blur-sm">
+          <div className="h-full w-full">
             <LiveRunMonitor userRole={user.role} runId={activeRunId} onClose={() => setActiveRunId(null)} />
           </div>
         </div>
