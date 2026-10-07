@@ -12,6 +12,7 @@
 - Added audited connection-profile editing so an administrator can bind locally encrypted secret names to imported profiles without exposing secret plaintext.
 - Added case-insensitive, workspace-scoped suite resource locks. Conflicting runs remain queued with visible wait state and a bounded deadline; renewable leases protect active runs, and expired or restart-interrupted leases become uncertain for audited administrator recovery.
 - Added suite-level setup and cleanup hooks to the suite editor and executor. Setup outputs are available to case iterations; cleanup is attempted after setup or case failure and cancellation. Hooks have their own visible run/report scope, and planned steps that do not start are persisted as skipped.
+- Added Cassandra connection profiles, verified-TLS read-only CQL checks and wait-until polling, with bound parameters, row/output bounds, selected columns, and isolated-worker egress validation.
 - Bundles do not include run history, reports/artifacts, scripts, or a SQLite snapshot. The importer currently accepts the uncompressed ZIP format produced by this application; external deflated ZIPs are not accepted.
 - Current verification for this pass: `cargo fmt --all`, `cargo check --workspace --locked`, `cargo check --tests --workspace --locked`, `npm run build`, and `git diff --check` passed. Rust runtime tests, Docker/Compose execution, and browser interaction were not run.
 
@@ -33,7 +34,7 @@
 
 - Conditional branches and reusable case calls are absent. The visual editor is an ordered sequence, and publication rejects unsupported graph routing.
 - Suite hooks currently support the same bounded node types as the case runtime, but do not yet offer branches or reusable-case calls.
-- Supported nodes are API request, API/MySQL/MongoDB wait-until, MySQL read, MongoDB read, bounded tabular count, and sleep. Cassandra and approved-script execution are not available in the publishable runtime.
+- Supported nodes are API request, API/MySQL/Cassandra/MongoDB wait-until, MySQL/Cassandra read checks, MongoDB read, bounded tabular count, and sleep. Cassandra is currently limited to verified-TLS parameterized SELECTs with bounded selected-column outputs. Approved-script execution is not available in the publishable runtime.
 - Tabular checks, complete response extraction/assertions, declared case input contracts for reusable calls, full static type inference across every workflow field, and SecretRef variable types do not cover the design's complete contract.
 
 ### Data, reporting, and operations

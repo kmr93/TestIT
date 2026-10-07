@@ -411,7 +411,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
     updateSelectedNode(updated);
   };
 
-  const updateWaitTarget = (target: 'api' | 'mysql' | 'mongodb') => {
+  const updateWaitTarget = (target: 'api' | 'mysql' | 'cassandra' | 'mongodb') => {
     if (!selectedNode) return;
     const updated = {
       ...selectedNode,
@@ -767,14 +767,14 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
                 </label>}
               </div>
 
-              {['api.request', 'wait.until', 'db.mysql', 'db.mongodb', 'data.tabular'].includes(selectedNode.type) && (
+              {['api.request', 'wait.until', 'db.mysql', 'db.cassandra', 'db.mongodb', 'data.tabular'].includes(selectedNode.type) && (
                 <label className="block text-xs font-semibold text-slate-300">Connection profile
                   <select value={selectedNode.config.connection_id || ''} onChange={(event) => updateNodeConfig('connection_id', event.target.value)} className="input-field mt-1.5 text-xs">
                     <option value="">Select a profile</option>
                     {connections.filter((connection) => {
                       const allowed = selectedNode.type === 'wait.until'
                         ? (selectedNode.config.target || 'api') === 'api' ? ['api', 'http'] : [selectedNode.config.target]
-                        : selectedNode.type === 'api.request' ? ['api', 'http'] : selectedNode.type === 'db.mysql' ? ['mysql'] : selectedNode.type === 'db.mongodb' ? ['mongodb'] : ['parquet', 'delta'];
+                        : selectedNode.type === 'api.request' ? ['api', 'http'] : selectedNode.type === 'db.mysql' ? ['mysql'] : selectedNode.type === 'db.cassandra' ? ['cassandra'] : selectedNode.type === 'db.mongodb' ? ['mongodb'] : ['parquet', 'delta'];
                       return allowed.includes(connection.connector_type);
                     }).map((connection) => <option key={connection.id} value={connection.id}>{connection.name} · {connection.connector_type}</option>)}
                   </select>
@@ -786,6 +786,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
                 <select value={selectedNode.config.target || 'api'} onChange={(event) => updateWaitTarget(event.target.value as 'api' | 'mysql' | 'mongodb')} className="input-field mt-1.5 text-xs">
                   <option value="api">HTTP API response</option>
                   <option value="mysql">MySQL query row count</option>
+                  <option value="cassandra">Cassandra query row count</option>
                   <option value="mongodb">MongoDB document count</option>
                 </select>
               </label>}
@@ -854,12 +855,41 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
                 </label>
               </>}
 
+              {selectedNode.type === 'wait.until' && selectedNode.config.target === 'cassandra' && <>
+                <label className="block text-xs font-semibold text-slate-300">Read-only CQL query
+                  <textarea rows={5} value={selectedNode.config.query || ''} onChange={(event) => updateNodeConfig('query', event.target.value)} className="input-field mt-1.5 resize-y font-mono text-xs" placeholder="SELECT id FROM keyspace.table WHERE id = %s" />
+                </label>
+                <ConfigJsonInput label="Bound query parameters (JSON array)" value={selectedNode.config.params || []} onCommit={(value) => updateNodeConfig('params', value)} />
+                <label className="block text-xs font-semibold text-slate-300">Minimum rows expected
+                  <input type="number" min={0} max={500} value={selectedNode.config.expected_min_rows ?? 1} onChange={(event) => updateNodeConfig('expected_min_rows', Number(event.target.value))} className="input-field mt-1.5 text-xs font-mono" />
+                </label>
+                <p className="text-[10px] leading-4 text-slate-500">CQL values remain bound parameters. The poll reports counts only and requires verified TLS.</p>
+                <label className="block text-xs font-semibold text-slate-300">Poll interval (seconds)
+                  <input type="number" min={1} max={60} value={selectedNode.config.poll_interval_seconds ?? 2} onChange={(event) => updateNodeConfig('poll_interval_seconds', Math.min(60, Math.max(1, Number(event.target.value))))} className="input-field mt-1.5 text-xs font-mono" />
+                </label>
+                <label className="block text-xs font-semibold text-slate-300">Query timeout per poll (seconds)
+                  <input type="number" min={1} max={60} value={selectedNode.config.request_timeout_seconds ?? 5} onChange={(event) => updateNodeConfig('request_timeout_seconds', Math.min(60, Number(event.target.value)))} className="input-field mt-1.5 text-xs font-mono" />
+                </label>
+              </>}
+
               {selectedNode.type === 'db.mysql' && <>
                 <label className="block text-xs font-semibold text-slate-300">Read-only SQL query
                   <textarea rows={5} value={selectedNode.config.query || ''} onChange={(event) => updateNodeConfig('query', event.target.value)} className="input-field mt-1.5 resize-y font-mono text-xs" placeholder="SELECT id FROM customers LIMIT 100" />
                 </label>
                 <ConfigJsonInput label="Bound query parameters (JSON array)" value={selectedNode.config.params || []} onCommit={(value) => updateNodeConfig('params', value)} />
                 <p className="-mt-2 text-[10px] leading-4 text-slate-500">Use %s placeholders in SQL; variables resolve inside this parameter array and remain bound values.</p>
+                <label className="block text-xs font-semibold text-slate-300">Minimum rows expected
+                  <input type="number" min={0} max={500} value={selectedNode.config.expected_min_rows ?? 1} onChange={(event) => updateNodeConfig('expected_min_rows', Number(event.target.value))} className="input-field mt-1.5 text-xs font-mono" />
+                </label>
+                <ConfigJsonInput label="Bounded output columns (JSON array)" value={selectedNode.config.output_columns || []} onCommit={(value) => updateNodeConfig('output_columns', value)} />
+              </>}
+
+              {selectedNode.type === 'db.cassandra' && <>
+                <label className="block text-xs font-semibold text-slate-300">Read-only CQL query
+                  <textarea rows={5} value={selectedNode.config.query || ''} onChange={(event) => updateNodeConfig('query', event.target.value)} className="input-field mt-1.5 resize-y font-mono text-xs" placeholder="SELECT id FROM keyspace.table LIMIT 100" />
+                </label>
+                <ConfigJsonInput label="Bound query parameters (JSON array)" value={selectedNode.config.params || []} onCommit={(value) => updateNodeConfig('params', value)} />
+                <p className="-mt-2 text-[10px] leading-4 text-slate-500">Use %s placeholders. TLS verification stays enabled; return columns only when you select them below.</p>
                 <label className="block text-xs font-semibold text-slate-300">Minimum rows expected
                   <input type="number" min={0} max={500} value={selectedNode.config.expected_min_rows ?? 1} onChange={(event) => updateNodeConfig('expected_min_rows', Number(event.target.value))} className="input-field mt-1.5 text-xs font-mono" />
                 </label>

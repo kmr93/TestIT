@@ -318,6 +318,7 @@ pub async fn publish_revision(
                 "api.request"
                     | "wait.until"
                     | "db.mysql"
+                    | "db.cassandra"
                     | "db.mongodb"
                     | "data.tabular"
                     | "sleep.wait"
@@ -404,6 +405,11 @@ pub async fn publish_revision(
                         .and_then(Value::as_str)
                         .and_then(|query| query.split_whitespace().next())
                         .is_some_and(|word| word.eq_ignore_ascii_case("SELECT")),
+                    "cassandra" => config
+                        .get("query")
+                        .and_then(Value::as_str)
+                        .and_then(|query| query.split_whitespace().next())
+                        .is_some_and(|word| word.eq_ignore_ascii_case("SELECT")),
                     "mongodb" => config
                         .get("collection")
                         .and_then(Value::as_str)
@@ -414,7 +420,7 @@ pub async fn publish_revision(
                     return (
                         StatusCode::UNPROCESSABLE_ENTITY,
                         Json(
-                            json!({ "error": "Wait-until requires a valid API read, MySQL SELECT, or MongoDB collection target and a poll interval from 1 to 60 seconds", "code": "WAIT_UNTIL_CONFIG_INVALID" }),
+                            json!({ "error": "Wait-until requires a valid API read, database SELECT, or MongoDB collection target and a poll interval from 1 to 60 seconds", "code": "WAIT_UNTIL_CONFIG_INVALID" }),
                         ),
                     );
                 }
@@ -717,6 +723,7 @@ pub(crate) fn validate_suite_hook_nodes(definition: &Value) -> Result<(), String
                 "api.request"
                     | "wait.until"
                     | "db.mysql"
+                    | "db.cassandra"
                     | "db.mongodb"
                     | "data.tabular"
                     | "sleep.wait"
@@ -743,6 +750,11 @@ pub(crate) fn validate_suite_hook_nodes(definition: &Value) -> Result<(), String
                 let valid_target = match target {
                     "api" => matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS"),
                     "mysql" => config
+                        .get("query")
+                        .and_then(Value::as_str)
+                        .and_then(|query| query.split_whitespace().next())
+                        .is_some_and(|word| word.eq_ignore_ascii_case("SELECT")),
+                    "cassandra" => config
                         .get("query")
                         .and_then(Value::as_str)
                         .and_then(|query| query.split_whitespace().next())

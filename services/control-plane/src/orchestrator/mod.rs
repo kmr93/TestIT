@@ -1778,6 +1778,7 @@ impl Orchestrator {
             let compatible = matches!(
                 (profile.0.as_str(), node_type),
                 ("mysql", "db.mysql")
+                    | ("cassandra", "db.cassandra")
                     | ("mongodb", "db.mongodb")
                     | ("api", "api.request")
                     | ("http", "api.request")
@@ -1786,7 +1787,10 @@ impl Orchestrator {
             ) || (node_type == "wait.until"
                 && matches!(
                     (profile.0.as_str(), wait_target),
-                    ("api" | "http", "api") | ("mysql", "mysql") | ("mongodb", "mongodb")
+                    ("api" | "http", "api")
+                        | ("mysql", "mysql")
+                        | ("cassandra", "cassandra")
+                        | ("mongodb", "mongodb")
                 ));
             if !compatible {
                 return Err((

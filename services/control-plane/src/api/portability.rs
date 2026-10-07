@@ -808,7 +808,7 @@ fn parse_bundle(bytes: &[u8]) -> Result<ParsedBundle, String> {
         }
         if !matches!(
             connection.get("connector_type").and_then(Value::as_str),
-            Some("mysql" | "mongodb" | "api" | "http" | "parquet" | "delta")
+            Some("mysql" | "cassandra" | "mongodb" | "api" | "http" | "parquet" | "delta")
         ) {
             return Err("Bundle contains an unsupported connection type".to_string());
         }
@@ -957,6 +957,7 @@ fn validate_bundled_case_nodes(definition: &Value) -> Result<(), String> {
                 "api.request"
                     | "wait.until"
                     | "db.mysql"
+                    | "db.cassandra"
                     | "db.mongodb"
                     | "data.tabular"
                     | "sleep.wait"
@@ -982,6 +983,11 @@ fn validate_bundled_case_nodes(definition: &Value) -> Result<(), String> {
             let valid_target = match target {
                 "api" => matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS"),
                 "mysql" => config
+                    .get("query")
+                    .and_then(Value::as_str)
+                    .and_then(|query| query.split_whitespace().next())
+                    .is_some_and(|word| word.eq_ignore_ascii_case("SELECT")),
+                "cassandra" => config
                     .get("query")
                     .and_then(Value::as_str)
                     .and_then(|query| query.split_whitespace().next())

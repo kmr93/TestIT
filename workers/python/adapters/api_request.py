@@ -241,7 +241,7 @@ def execute_wait_until(
             {},
             {"duration_ms": 0.0},
         )
-    if target not in {"api", "mysql", "mongodb"}:
+    if target not in {"api", "mysql", "cassandra", "mongodb"}:
         return (
             "ERROR",
             {"code": "WAIT_TARGET_UNSUPPORTED", "message": "Wait-until target must be API, MySQL, or MongoDB", "class": "INTERNAL", "details": {}},
@@ -283,6 +283,12 @@ def execute_wait_until(
             request_config.setdefault("expected_min_rows", 1)
             status, error, outputs, metrics = execute_mysql_query(request_config, inputs, secrets, lambda *_: None)
             # A wait step observes only a count and never carries query rows forward.
+            outputs = {"row_count": outputs.get("row_count")} if isinstance(outputs, dict) and "row_count" in outputs else {}
+        elif target == "cassandra":
+            from adapters.db_cassandra import execute_cassandra_query
+
+            request_config.setdefault("expected_min_rows", 1)
+            status, error, outputs, metrics = execute_cassandra_query(request_config, inputs, secrets, lambda *_: None)
             outputs = {"row_count": outputs.get("row_count")} if isinstance(outputs, dict) and "row_count" in outputs else {}
         else:
             from adapters.db_mongodb import execute_mongodb_query

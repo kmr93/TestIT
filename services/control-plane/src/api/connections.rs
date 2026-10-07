@@ -167,7 +167,7 @@ pub async fn create_connection(
     }
     if !matches!(
         payload.connector_type.as_str(),
-        "mysql" | "mongodb" | "api" | "http" | "parquet" | "delta"
+        "mysql" | "cassandra" | "mongodb" | "api" | "http" | "parquet" | "delta"
     ) {
         return (
             StatusCode::BAD_REQUEST,
@@ -294,7 +294,7 @@ pub async fn update_connection(
     }
     if !matches!(
         payload.connector_type.as_str(),
-        "mysql" | "mongodb" | "api" | "http" | "parquet" | "delta"
+        "mysql" | "cassandra" | "mongodb" | "api" | "http" | "parquet" | "delta"
     ) {
         return (
             StatusCode::BAD_REQUEST,
@@ -451,6 +451,7 @@ async fn run_connection_probe(
     };
     let node_type = match profile.connector_type.as_str() {
         "mysql" => "db.mysql",
+        "cassandra" => "db.cassandra",
         "mongodb" => "db.mongodb",
         "api" | "http" => "api.request",
         "parquet" | "delta" => "data.tabular",
@@ -494,6 +495,12 @@ async fn run_connection_probe(
     if node_type == "db.mysql" {
         config.insert("query".into(), json!("SELECT 1 AS testit_health_check"));
         config.insert("output_columns".into(), json!(["testit_health_check"]));
+        config.insert("expected_min_rows".into(), json!(1));
+    } else if node_type == "db.cassandra" {
+        config.insert(
+            "query".into(),
+            json!("SELECT release_version FROM system.local"),
+        );
         config.insert("expected_min_rows".into(), json!(1));
     } else if node_type == "db.mongodb" {
         config.insert("health_check".into(), json!(true));

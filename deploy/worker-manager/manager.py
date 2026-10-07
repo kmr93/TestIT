@@ -27,7 +27,7 @@ WORKER_ALLOWED_HOSTS = tuple(
 )
 MANAGER_TOKEN = os.getenv("WORKER_MANAGER_TOKEN", "")
 MAX_REQUEST_BYTES = 1_048_576
-ALLOWED_NODE_TYPES = {"api.request", "wait.until", "db.mysql", "db.mongodb", "data.tabular", "sleep.wait"}
+ALLOWED_NODE_TYPES = {"api.request", "wait.until", "db.mysql", "db.cassandra", "db.mongodb", "data.tabular", "sleep.wait"}
 ACTIVE_INVOCATIONS = threading.BoundedSemaphore(4)
 CANCELLED_RUNS = {}
 CANCEL_LOCK = threading.Lock()
@@ -70,13 +70,13 @@ def docker_request(method, path, body=None, headers=None, timeout=20):
 def target_host(envelope):
     node_type = envelope["node_type"]
     config = envelope.get("config") or {}
-    if node_type == "wait.until" and config.get("target") in {"mysql", "mongodb"}:
+    if node_type == "wait.until" and config.get("target") in {"mysql", "cassandra", "mongodb"}:
         if config.get("tls") is False:
             raise InvocationError(403, "TLS_REQUIRED", "Database connector TLS must remain enabled")
-        if config.get("target") == "mysql":
+        if config.get("target") in {"mysql", "cassandra"}:
             host = config.get("host")
             if not host:
-                raise InvocationError(422, "DB_HOST_REQUIRED", "MySQL waits need an explicit connection host")
+                raise InvocationError(422, "DB_HOST_REQUIRED", "Database waits need an explicit connection host")
         else:
             raw_uri = config.get("uri")
             if raw_uri:
@@ -107,6 +107,12 @@ def target_host(envelope):
         host = config.get("host")
         if not host:
             raise InvocationError(422, "DB_HOST_REQUIRED", "MySQL nodes need an explicit connection host")
+    elif node_type == "db.cassandra":
+        if config.get("tls") is False:
+            raise InvocationError(403, "TLS_REQUIRED", "Database connector TLS must remain enabled")
+        host = config.get("host")
+        if not host:
+            raise InvocationError(422, "DB_HOST_REQUIRED", "Cassandra nodes need an explicit connection host")
     elif node_type == "db.mongodb":
         if config.get("tls") is False:
             raise InvocationError(403, "TLS_REQUIRED", "Database connector TLS must remain enabled")
@@ -181,8 +187,8 @@ def validate_envelope(envelope):
     secrets = envelope.get("secrets", {})
     if not isinstance(config, dict) or not isinstance(inputs, dict) or not isinstance(secrets, dict):
         raise InvocationError(400, "INVALID_ENVELOPE", "config, inputs, and secrets must be objects")
-    if envelope.get("node_type") == "wait.until" and config.get("target", "api") not in {"api", "mysql", "mongodb"}:
-        raise InvocationError(422, "WAIT_TARGET_UNSUPPORTED", "Wait-until target must be API, MySQL, or MongoDB")
+    if envelope.get("node_type") == "wait.until" and config.get("target", "api") not in {"api", "mysql", "cassandra", "mongodb"}:
+        raise InvocationError(422, "WAIT_TARGET_UNSUPPORTED", "Wait-until target must be API, MySQL, Cassandra, or MongoDB")
     if has_inline_credentials(config):
         raise InvocationError(422, "INLINE_CREDENTIAL_DISALLOWED", "Credentials must use encrypted secret references")
     if len(json.dumps(envelope, separators=(",", ":")).encode("utf-8")) > MAX_REQUEST_BYTES:

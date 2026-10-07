@@ -341,10 +341,21 @@ export const EnvironmentsView: React.FC = () => {
                 <label className="block text-xs font-semibold text-slate-300 mb-1">Connector Type</label>
                 <select
                   value={newConnType}
-                  onChange={(e) => setNewConnType(e.target.value)}
+                  onChange={(e) => {
+                    const nextType = e.target.value;
+                    setNewConnType(nextType);
+                    if (nextType === 'cassandra') {
+                      setNewConnSettings(JSON.stringify({ host: 'localhost', port: 9042, keyspace: 'test_keyspace', tls: true }, null, 2));
+                      setNewConnSecrets(JSON.stringify({ password_secret: 'cassandra_password' }, null, 2));
+                    } else if (nextType === 'mysql') {
+                      setNewConnSettings(JSON.stringify({ host: 'localhost', port: 3306, database: 'test_db', tls: true }, null, 2));
+                      setNewConnSecrets(JSON.stringify({ password_secret: 'mysql_password' }, null, 2));
+                    }
+                  }}
                   className="input-field text-xs font-mono"
                 >
                   <option value="mysql">MySQL / MariaDB</option>
+                  <option value="cassandra">Cassandra</option>
                   <option value="mongodb">MongoDB</option>
                   <option value="api">HTTP API</option>
                   <option value="http">HTTP endpoint</option>

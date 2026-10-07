@@ -15,6 +15,7 @@ import uuid
 from adapters.api_request import execute_api_request, execute_wait_until
 from adapters.data_tabular import execute_tabular_check
 from adapters.db_mongodb import execute_mongodb_query
+from adapters.db_cassandra import execute_cassandra_query
 from adapters.db_mysql import execute_mysql_query
 from adapters.script_runner import execute_approved_script
 
@@ -84,6 +85,10 @@ def main():
             )
         elif node_type == "db.mysql":
             status, error, outputs, metrics = execute_mysql_query(
+                config, inputs, secrets, progress_callback
+            )
+        elif node_type == "db.cassandra":
+            status, error, outputs, metrics = execute_cassandra_query(
                 config, inputs, secrets, progress_callback
             )
         elif node_type == "db.mongodb":

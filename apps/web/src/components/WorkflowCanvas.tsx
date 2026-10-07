@@ -35,6 +35,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
       case 'api.request':
         return <Globe className="w-4 h-4 text-sky-400" />;
       case 'db.mysql':
+      case 'db.cassandra':
       case 'db.mongodb':
         return <Database className="w-4 h-4 text-emerald-400" />;
       case 'data.tabular':
@@ -56,6 +57,8 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
       ? { target: 'api', method: 'GET', path: '', expected_status: 200, headers: {}, assertions: [], poll_interval_seconds: 2, request_timeout_seconds: 5 }
       : type === 'db.mysql'
       ? { connection_id: '', query: 'SELECT 1', expected_min_rows: 1, max_rows: 100, output_columns: [] }
+      : type === 'db.cassandra'
+      ? { connection_id: '', query: 'SELECT release_version FROM system.local', params: [], expected_min_rows: 1, max_rows: 100, output_columns: [] }
       : type === 'db.mongodb'
       ? { connection_id: '', collection: '', filter: {}, expected_min_count: 1, max_documents: 100 }
       : type === 'data.tabular'
@@ -123,6 +126,13 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
               DB Check
             </button>
             <button
+              onClick={() => addNode('db.cassandra', 'Cassandra Read Check')}
+              className="btn btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5 hover:border-emerald-500/50"
+            >
+              <Plus className="w-3.5 h-3.5 text-emerald-400" />
+              Cassandra Check
+            </button>
+            <button
               onClick={() => addNode('db.mongodb', 'MongoDB Read Check')}
               className="btn btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5 hover:border-emerald-500/50"
             >
@@ -184,7 +194,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
                         <h4 className="text-sm font-semibold text-slate-200">{node.name}</h4>
                         <div className="flex items-center gap-2 mt-0.5">
                           <span className="text-[11px] font-mono text-indigo-400">{node.type}</span>
-                          <span className={`rounded px-1.5 py-0.5 text-[9px] uppercase tracking-wide ${node.phase === 'cleanup' ? 'bg-amber-950 text-amber-300' : node.phase === 'setup' ? 'bg-sky-950 text-sky-300' : 'bg-slate-800 text-slate-400'}`}>{node.phase || 'main'}</span>
+                          {!hidePhase && <span className={`rounded px-1.5 py-0.5 text-[9px] uppercase tracking-wide ${node.phase === 'cleanup' ? 'bg-amber-950 text-amber-300' : node.phase === 'setup' ? 'bg-sky-950 text-sky-300' : 'bg-slate-800 text-slate-400'}`}>{node.phase || 'main'}</span>}
                           <span className="text-[10px] text-slate-500">•</span>
                           <span className="text-[11px] text-slate-400">Timeout: {node.timeout_seconds}s</span>
                         </div>
