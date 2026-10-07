@@ -56,7 +56,7 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose, 
         setEvents((prev) => [...prev.slice(-99), { type, data }]);
       } catch (_) {}
     };
-    ['run.started', 'run.waiting_for_resource', 'run.planned', 'case.started', 'case.finished', 'step.started', 'step.finished']
+    ['run.started', 'run.waiting_for_resource', 'run.planned', 'suite.hook.started', 'suite.hook.finished', 'case.started', 'case.finished', 'step.started', 'step.finished']
       .forEach((type) => sse.addEventListener(type, trackEvent(type)));
 
     sse.addEventListener('run.finished', (e: MessageEvent) => {
@@ -203,7 +203,7 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose, 
       </div>
       {(snapshot?.stats?.current_case || snapshot?.stats?.current_step) && (
         <div className="rounded-lg border border-indigo-900/70 bg-indigo-950/30 px-4 py-3 text-xs text-slate-300">
-          Active case <span className="font-mono text-indigo-200">{snapshot?.stats?.current_case || '—'}</span>
+          Active execution <span className="font-mono text-indigo-200">{snapshot?.stats?.current_case || '—'}</span>
           <span className="mx-2 text-slate-600">·</span>
           Current step <span className="font-medium text-indigo-200">{snapshot?.stats?.current_step || '—'}</span>
         </div>

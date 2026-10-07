@@ -12,9 +12,8 @@ use uuid::Uuid;
 use crate::{
     api::auth::AuthenticatedUser,
     models::{
-        AssetRevision, ComparisonItem, ProgressInfo, RunComparisonResponse, RunLinks,
-        RunProgressSnapshotRecord, RunStatsSummary, StepRunRecord, SuiteRunRecord,
-        TriggerRunRequest, TriggerRunResponse,
+        AssetRevision, ComparisonItem, RunComparisonResponse, RunLinks, RunProgressSnapshotRecord,
+        StepRunRecord, SuiteRunRecord, TriggerRunRequest, TriggerRunResponse,
     },
     AppState,
 };
@@ -660,7 +659,7 @@ pub async fn rerun_failed(
         );
     }
     let failed_case_runs = sqlx::query_as::<_, crate::models::CaseRunRecord>(
-        "SELECT * FROM case_runs WHERE suite_run_id = ? AND status IN ('FAILED', 'ERROR') ORDER BY ordinal",
+        "SELECT * FROM case_runs WHERE suite_run_id = ? AND execution_scope = 'case' AND status IN ('FAILED', 'ERROR') ORDER BY ordinal",
     )
     .bind(&source_run_id)
     .fetch_all(&state.db)
@@ -920,12 +919,12 @@ pub async fn export_run(
             };
             let failures = steps
                 .iter()
-                .filter(|step| step.status != "SUCCEEDED")
+                .filter(|step| !matches!(step.status.as_str(), "SUCCEEDED" | "SKIPPED"))
                 .count()
                 + case_rows
                     .iter()
                     .filter(|case| {
-                        case.status != "PASSED"
+                        !matches!(case.status.as_str(), "PASSED" | "SKIPPED")
                             && steps_by_case.get(&case.id).is_none_or(Vec::is_empty)
                     })
                     .count()
@@ -936,24 +935,24 @@ pub async fn export_run(
                 };
             let mut xml = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites><testsuite name=\"TestIT Run {}\" tests=\"{}\" failures=\"{}\">", xml_escape(&run.id), tests, failures);
             for case in &case_rows {
-                let name = case_names
-                    .get(&case.case_revision_id)
-                    .cloned()
-                    .unwrap_or_else(|| "Test case".to_string());
+                let name = report_case_name(case, &case_names);
                 if let Some(case_steps) = steps_by_case.get(&case.id) {
                     for step in case_steps {
                         let duration = step.duration_ms.unwrap_or_default() / 1000.0;
+                        let test_name = if case.execution_scope == "case" {
+                            format!("Iteration {}: {}", case.iteration_index + 1, step.node_name)
+                        } else {
+                            step.node_name.clone()
+                        };
                         xml.push_str(&format!(
                             "<testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\">",
                             xml_escape(&name),
-                            xml_escape(&format!(
-                                "Iteration {}: {}",
-                                case.iteration_index + 1,
-                                step.node_name
-                            )),
+                            xml_escape(&test_name),
                             duration
                         ));
-                        if step.status != "SUCCEEDED" {
+                        if step.status == "SKIPPED" {
+                            xml.push_str("<skipped/>");
+                        } else if step.status != "SUCCEEDED" {
                             let message = step.error_json.as_deref().unwrap_or(&step.status);
                             xml.push_str(&format!(
                                 "<failure message=\"{}\">{}</failure>",
@@ -966,10 +965,12 @@ pub async fn export_run(
                 } else {
                     let failed = case.status != "PASSED";
                     xml.push_str(&format!(
-                        "<testcase classname=\"{}\" name=\"{}\">{} </testcase>",
+                        "<testcase classname=\"{}\" name=\"{}\">{}</testcase>",
                         xml_escape(&name),
                         xml_escape(&name),
-                        if failed {
+                        if case.status == "SKIPPED" {
+                            "<skipped/>".to_string()
+                        } else if failed {
                             format!("<failure message=\"{}\"/>", xml_escape(&case.status))
                         } else {
                             String::new()
@@ -996,17 +997,18 @@ pub async fn export_run(
                 "run_id,case_name,iteration,case_status,step_name,step_status,duration_ms,error\n",
             );
             for case in &case_rows {
-                let name = case_names
-                    .get(&case.case_revision_id)
-                    .cloned()
-                    .unwrap_or_else(|| "Test case".to_string());
+                let name = report_case_name(case, &case_names);
                 if let Some(case_steps) = steps_by_case.get(&case.id) {
                     for step in case_steps {
                         csv.push_str(&format!(
                             "{},{},{},{},{},{},{},{}\n",
                             csv_escape(&run.id),
                             csv_escape(&name),
-                            case.iteration_index + 1,
+                            if case.execution_scope == "case" {
+                                (case.iteration_index + 1).to_string()
+                            } else {
+                                String::new()
+                            },
                             csv_escape(&case.status),
                             csv_escape(&step.node_name),
                             csv_escape(&step.status),
@@ -1019,7 +1021,11 @@ pub async fn export_run(
                         "{},{},{},{},,, ,\n",
                         csv_escape(&run.id),
                         csv_escape(&name),
-                        case.iteration_index + 1,
+                        if case.execution_scope == "case" {
+                            (case.iteration_index + 1).to_string()
+                        } else {
+                            String::new()
+                        },
                         csv_escape(&case.status)
                     ));
                 }
@@ -1042,13 +1048,15 @@ pub async fn export_run(
             };
             let mut html = format!("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>TestIT run {}</title><style>body{{font-family:system-ui,sans-serif;max-width:1100px;margin:3rem auto;padding:0 2rem;background:#0f172a;color:#f8fafc}}table{{width:100%;border-collapse:collapse;margin-top:1rem}}th,td{{text-align:left;padding:.7rem;border-bottom:1px solid #334155}}.badge{{color:{};font-weight:700}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;color:#fca5a5}}</style></head><body><h1>Test run report</h1><p>Run ID: <code>{}</code></p><p>Status: <span class=\"badge\">{}</span></p><p>Started: {} · Finished: {}</p><h2>Results</h2><table><thead><tr><th>Case</th><th>Iteration</th><th>Case status</th><th>Step</th><th>Step status</th><th>Duration</th></tr></thead><tbody>", xml_escape(&run.id), color, xml_escape(&run.id), xml_escape(&run.status), xml_escape(run.started_at.as_deref().unwrap_or("")), xml_escape(run.finished_at.as_deref().unwrap_or("")));
             for case in &case_rows {
-                let name = case_names
-                    .get(&case.case_revision_id)
-                    .cloned()
-                    .unwrap_or_else(|| "Test case".to_string());
+                let name = report_case_name(case, &case_names);
+                let iteration = if case.execution_scope == "case" {
+                    (case.iteration_index + 1).to_string()
+                } else {
+                    String::new()
+                };
                 if let Some(case_steps) = steps_by_case.get(&case.id) {
                     for step in case_steps {
-                        html.push_str(&format!("<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{:.1} ms</td></tr>", xml_escape(&name), case.iteration_index + 1, xml_escape(&case.status), xml_escape(&step.node_name), xml_escape(&step.status), step.duration_ms.unwrap_or_default()));
+                        html.push_str(&format!("<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{:.1} ms</td></tr>", xml_escape(&name), xml_escape(&iteration), xml_escape(&case.status), xml_escape(&step.node_name), xml_escape(&step.status), step.duration_ms.unwrap_or_default()));
                         if let Some(error) = &step.error_json {
                             html.push_str(&format!(
                                 "<tr><td colspan=\"6\"><pre>{}</pre></td></tr>",
@@ -1057,7 +1065,7 @@ pub async fn export_run(
                         }
                     }
                 } else {
-                    html.push_str(&format!("<tr><td>{}</td><td>{}</td><td>{}</td><td colspan=\"3\">No step details recorded</td></tr>", xml_escape(&name), case.iteration_index + 1, xml_escape(&case.status)));
+                    html.push_str(&format!("<tr><td>{}</td><td>{}</td><td>{}</td><td colspan=\"3\">No step details recorded</td></tr>", xml_escape(&name), xml_escape(&iteration), xml_escape(&case.status)));
                 }
             }
             html.push_str("</tbody></table></body></html>");
@@ -1074,7 +1082,7 @@ async fn load_comparison_cases(
         "SELECT case_runs.case_revision_id, case_runs.iteration_index, assets.name, case_runs.status, case_runs.started_at, case_runs.finished_at
          FROM case_runs JOIN asset_revisions ON asset_revisions.id = case_runs.case_revision_id
          JOIN assets ON assets.id = asset_revisions.asset_id
-         WHERE case_runs.suite_run_id = ? ORDER BY case_runs.ordinal, case_runs.iteration_index",
+         WHERE case_runs.suite_run_id = ? AND case_runs.execution_scope = 'case' ORDER BY case_runs.ordinal, case_runs.iteration_index",
     )
     .bind(run_id)
     .fetch_all(&state.db)
@@ -1101,6 +1109,20 @@ async fn load_case_names(
         }
     }
     names
+}
+
+fn report_case_name(
+    case: &crate::models::CaseRunRecord,
+    names: &std::collections::HashMap<String, String>,
+) -> String {
+    match case.execution_scope.as_str() {
+        "suite_setup" => "Suite setup".to_string(),
+        "suite_cleanup" => "Suite cleanup".to_string(),
+        _ => names
+            .get(&case.case_revision_id)
+            .cloned()
+            .unwrap_or_else(|| "Test case".to_string()),
+    }
 }
 
 fn elapsed_ms(started: Option<&str>, finished: Option<&str>) -> Option<f64> {

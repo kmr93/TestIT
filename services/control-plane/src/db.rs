@@ -53,6 +53,17 @@ pub async fn run_migrations(pool: &DbPool) -> Result<(), anyhow::Error> {
     let users_migration = include_str!("../../../migrations/0003_disabled_users.sql");
     sqlx::raw_sql(users_migration).execute(pool).await?;
 
+    let has_execution_scope: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('case_runs') WHERE name = 'execution_scope')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if !has_execution_scope {
+        let suite_hooks_migration =
+            include_str!("../../../migrations/0004_case_execution_scope.sql");
+        sqlx::raw_sql(suite_hooks_migration).execute(pool).await?;
+    }
+
     info!("Database migrations applied successfully");
     Ok(())
 }

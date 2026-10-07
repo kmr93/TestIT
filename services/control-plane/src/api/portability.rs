@@ -878,6 +878,7 @@ fn validate_bundled_dependencies(assets: &[Value]) -> Result<(), String> {
                 validate_bundled_case_nodes(definition)?;
                 crate::api::assets::validate_case_variable_references(definition, None)?;
             } else {
+                crate::api::assets::validate_suite_hook_nodes(definition)?;
                 crate::resource_locks::validate_suite_resource_locks(definition)?;
                 crate::variables::validate_input_schema(definition.get("input_schema"))?;
                 let cases = definition

@@ -433,6 +433,12 @@ pub async fn publish_revision(
             );
         }
     } else if asset.kind == "suite" {
+        if let Err(message) = validate_suite_hook_nodes(&draft_val) {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": message, "code": "SUITE_HOOK_INVALID" })),
+            );
+        }
         if let Err(message) = crate::resource_locks::validate_suite_resource_locks(&draft_val) {
             return (
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -668,6 +674,104 @@ pub async fn get_revision(
     }
 }
 
+pub(crate) fn validate_suite_hook_nodes(definition: &Value) -> Result<(), String> {
+    let mut node_ids = std::collections::HashSet::new();
+    let mut all_hook_nodes = Vec::new();
+    for field in ["setup_nodes", "cleanup_nodes"] {
+        let nodes = definition
+            .get(field)
+            .map(|value| {
+                value
+                    .as_array()
+                    .ok_or_else(|| format!("Suite {field} must be an array of nodes"))
+            })
+            .transpose()?
+            .cloned()
+            .unwrap_or_default();
+        if nodes.len() > 100 {
+            return Err(format!("Suite {field} can contain at most 100 nodes"));
+        }
+        all_hook_nodes.extend(nodes.iter().cloned());
+        for node in &nodes {
+            let id = node.get("id").and_then(Value::as_str).unwrap_or_default();
+            let name = node.get("name").and_then(Value::as_str).unwrap_or_default();
+            let timeout = node
+                .get("timeout_seconds")
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            let node_type = node.get("type").and_then(Value::as_str).unwrap_or_default();
+            if id.is_empty() || !node_ids.insert(id.to_string()) {
+                return Err("Suite hook nodes need unique non-empty IDs".to_string());
+            }
+            if name.trim().is_empty()
+                || name.len() > 128
+                || !(1..=3600).contains(&timeout)
+                || node.get("type_version").and_then(Value::as_i64) != Some(1)
+            {
+                return Err(format!(
+                    "Suite hook node '{id}' has an invalid name, version, or timeout"
+                ));
+            }
+            if !matches!(
+                node_type,
+                "api.request"
+                    | "wait.until"
+                    | "db.mysql"
+                    | "db.mongodb"
+                    | "data.tabular"
+                    | "sleep.wait"
+            ) {
+                return Err(format!(
+                    "Suite hook node type '{node_type}' is not supported"
+                ));
+            }
+            if node_type == "wait.until" {
+                let config = node.get("config").unwrap_or(&Value::Null);
+                let target = config
+                    .get("target")
+                    .and_then(Value::as_str)
+                    .unwrap_or("api");
+                let method = config
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .unwrap_or("GET")
+                    .to_ascii_uppercase();
+                let interval = config
+                    .get("poll_interval_seconds")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(2);
+                let valid_target = match target {
+                    "api" => matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS"),
+                    "mysql" => config
+                        .get("query")
+                        .and_then(Value::as_str)
+                        .and_then(|query| query.split_whitespace().next())
+                        .is_some_and(|word| word.eq_ignore_ascii_case("SELECT")),
+                    "mongodb" => config
+                        .get("collection")
+                        .and_then(Value::as_str)
+                        .is_some_and(|collection| !collection.trim().is_empty()),
+                    _ => false,
+                };
+                if !valid_target || !(1..=60).contains(&interval) {
+                    return Err(format!(
+                        "Suite hook wait node '{id}' has an invalid or unsafe target"
+                    ));
+                }
+            }
+        }
+    }
+    let hook_definition = json!({ "variables": {}, "nodes": all_hook_nodes });
+    let mut suite_context = definition.clone();
+    if let Some(object) = suite_context.as_object_mut() {
+        // The hook nodes are already in their real execution order above. Do not
+        // pre-seed setup outputs here, which would allow forward references.
+        object.remove("setup_nodes");
+    }
+    validate_case_variable_references(&hook_definition, Some(&suite_context))?;
+    Ok(())
+}
+
 pub(crate) fn validate_case_variable_references(
     case_definition: &Value,
     suite_definition: Option<&Value>,
@@ -696,6 +800,19 @@ pub(crate) fn validate_case_variable_references(
         .flat_map(|row| row.into_iter().map(|(key, _)| key))
         .collect::<HashSet<_>>();
     let mut prior_steps = HashSet::new();
+    if let Some(setup_nodes) = suite_definition
+        .and_then(|definition| definition.get("setup_nodes"))
+        .and_then(Value::as_array)
+    {
+        for node in setup_nodes {
+            if let Some(id) = node.get("id").and_then(Value::as_str) {
+                prior_steps.insert(id.to_string());
+            }
+            if let Some(name) = node.get("name").and_then(Value::as_str) {
+                prior_steps.insert(name.to_string());
+            }
+        }
+    }
     let mut nodes = case_definition
         .get("nodes")
         .and_then(Value::as_array)
@@ -755,9 +872,53 @@ pub(crate) fn validate_case_variable_references(
     Ok(())
 }
 
+#[cfg(test)]
+mod suite_hook_validation_tests {
+    use super::validate_suite_hook_nodes;
+    use serde_json::{json, Value};
+
+    fn node(id: &str, name: &str, config: Value) -> Value {
+        json!({
+            "id": id,
+            "name": name,
+            "type": "api.request",
+            "type_version": 1,
+            "timeout_seconds": 10,
+            "config": config
+        })
+    }
+
+    #[test]
+    fn suite_cleanup_can_reference_suite_setup_output() {
+        let definition = json!({
+            "variables": {},
+            "setup_nodes": [node("prepare", "Prepare", json!({}))],
+            "cleanup_nodes": [node("release", "Release", json!({
+                "body": "{{step.prepare.response.body.id}}"
+            }))]
+        });
+
+        assert!(validate_suite_hook_nodes(&definition).is_ok());
+    }
+
+    #[test]
+    fn suite_setup_cannot_reference_a_later_setup_node() {
+        let definition = json!({
+            "variables": {},
+            "setup_nodes": [
+                node("first", "First", json!({ "body": "{{step.second.response.body.id}}" })),
+                node("second", "Second", json!({}))
+            ],
+            "cleanup_nodes": []
+        });
+
+        assert!(validate_suite_hook_nodes(&definition).is_err());
+    }
+}
+
 /// Cycle detection via Kahn's algorithm
 fn detect_cycles(nodes: &[Value], edges: &[Value]) -> Result<(), String> {
-    use std::collections::{HashMap, HashSet, VecDeque};
+    use std::collections::{HashMap, VecDeque};
 
     let mut in_degrees: HashMap<String, usize> = HashMap::new();
     let mut adj: HashMap<String, Vec<String>> = HashMap::new();

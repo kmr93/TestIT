@@ -11,8 +11,9 @@
 - Added desktop author controls to download a bundle, preview an upload, review name conflicts and credential re-entry, and apply the import.
 - Added audited connection-profile editing so an administrator can bind locally encrypted secret names to imported profiles without exposing secret plaintext.
 - Added case-insensitive, workspace-scoped suite resource locks. Conflicting runs remain queued with visible wait state and a bounded deadline; renewable leases protect active runs, and expired or restart-interrupted leases become uncertain for audited administrator recovery.
+- Added suite-level setup and cleanup hooks to the suite editor and executor. Setup outputs are available to case iterations; cleanup is attempted after setup or case failure and cancellation. Hooks have their own visible run/report scope, and planned steps that do not start are persisted as skipped.
 - Bundles do not include run history, reports/artifacts, scripts, or a SQLite snapshot. The importer currently accepts the uncompressed ZIP format produced by this application; external deflated ZIPs are not accepted.
-- Current verification for this pass: `cargo fmt --all`, `cargo check --workspace --locked`, `cargo check --tests --workspace --locked`, `npm run build`, and `git diff --check` passed. The targeted resource-lock test build did not reach execution; Docker/Compose/browser execution were not run.
+- Current verification for this pass: `cargo fmt --all`, `cargo check --workspace --locked`, `cargo check --tests --workspace --locked`, `npm run build`, and `git diff --check` passed. Rust runtime tests, Docker/Compose execution, and browser interaction were not run.
 
 ## Implemented in the current tree
 
@@ -20,7 +21,7 @@
 - Case data iteration from bounded JSON/CSV inputs. Iterations have distinct run records, pinned row indices, and deterministic variable context.
 - Suite revisions can declare typed run inputs. Publication validates the declaration, and the run API rejects missing required values, undeclared fields, and values with the wrong type before queueing.
 - Publishing checks variable references against declared run/suite/case/data-row names, built-in system names, and earlier nodes in phase execution order. Literal function arguments are also evaluated for configuration errors during publication.
-- Case-level setup, main, and cleanup phases. Setup failure skips main execution; cleanup is attempted after main/setup failure and cancellation. Cleanup errors remain reported and do not overwrite an earlier failed result.
+- Case-level setup, main, and cleanup phases, plus suite-level setup and cleanup. Setup failure skips main execution; cleanup is attempted after main/setup failure and cancellation. Suite setup outputs are passed into each case iteration, and suite cleanup is attempted after case or setup failure/cancellation. Cleanup errors remain reported and do not overwrite an earlier failed result.
 - A Rust orchestrator that validates and dispatches supported nodes to a separate worker manager, validates result envelopes, persists statuses/outputs/metrics, and observes cancellation. The worker manager creates short-lived isolated containers and enforces configured target hosts and resource/output bounds.
 - API wait-until polling for idempotent GET, HEAD, and OPTIONS requests, with bounded intervals/deadlines and attempt reporting.
 - Run-, suite-, case-, iteration-, environment-, and step-scoped variable resolution for the implemented resolver features; previews avoid network execution and mask secret references.
@@ -31,7 +32,7 @@
 ### Workflow behavior
 
 - Conditional branches and reusable case calls are absent. The visual editor is an ordered sequence, and publication rejects unsupported graph routing.
-- Suite-level setup and teardown remain absent. Cleanup support is at case-iteration scope.
+- Suite hooks currently support the same bounded node types as the case runtime, but do not yet offer branches or reusable-case calls.
 - Supported nodes are API request, API/MySQL/MongoDB wait-until, MySQL read, MongoDB read, bounded tabular count, and sleep. Cassandra and approved-script execution are not available in the publishable runtime.
 - Tabular checks, complete response extraction/assertions, declared case input contracts for reusable calls, full static type inference across every workflow field, and SecretRef variable types do not cover the design's complete contract.
 

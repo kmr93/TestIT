@@ -44,6 +44,8 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [nodes, setNodes] = useState<NodeInstance[]>([]);
+  const [suiteSetupNodes, setSuiteSetupNodes] = useState<NodeInstance[]>([]);
+  const [suiteCleanupNodes, setSuiteCleanupNodes] = useState<NodeInstance[]>([]);
   const [datasetFormat, setDatasetFormat] = useState<'json' | 'csv'>('json');
   const [datasetText, setDatasetText] = useState('');
   const [suiteCases, setSuiteCases] = useState<Array<{ case_id: string; revision_id?: string; ordinal: number }>>([]);
@@ -53,6 +55,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
   const [publishedCaseRevisions, setPublishedCaseRevisions] = useState<Array<{ assetId: string; name: string; revisionId: string; version: number }>>([]);
   const [candidateRevisionId, setCandidateRevisionId] = useState('');
   const [selectedNode, setSelectedNode] = useState<NodeInstance | null>(null);
+  const [selectedNodeScope, setSelectedNodeScope] = useState<'case' | 'suite_setup' | 'suite_cleanup'>('case');
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newAssetName, setNewAssetName] = useState('');
@@ -152,8 +155,11 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
         setHasInputSchemaContract(Object.prototype.hasOwnProperty.call(definition || {}, 'input_schema'));
         setCaseVariables({});
         setNodes([]);
+        setSuiteSetupNodes(definition?.setup_nodes || []);
+        setSuiteCleanupNodes(definition?.cleanup_nodes || []);
         setDatasetFormat('json');
         setDatasetText('');
+        setSelectedNodeScope('case');
         setSelectedNode(null);
       } else {
         setInputSchemaText('{}');
@@ -162,6 +168,8 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
         setHasInputSchemaContract(false);
         const parsedNodes = definition?.nodes || [];
         setNodes(parsedNodes);
+        setSuiteSetupNodes([]);
+        setSuiteCleanupNodes([]);
         setCaseVariables(definition?.variables || {});
         setSuiteVariables({});
         const dataset = definition?.data_set || definition?.dataset;
@@ -171,6 +179,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
           ? (dataset?.content || '')
           : JSON.stringify(dataset?.rows || [], null, 2));
         setSuiteCases([]);
+        setSelectedNodeScope('case');
         setSelectedNode(parsedNodes[0] || null);
       }
     } catch (err) {
@@ -197,7 +206,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
         kind: newAssetKind,
         name,
         initial_draft: newAssetKind === 'suite'
-          ? { id: crypto.randomUUID(), name, description: '', execution_mode: 'sequential', input_schema: {}, cases: [] }
+          ? { id: crypto.randomUUID(), name, description: '', execution_mode: 'sequential', input_schema: {}, setup_nodes: [], cleanup_nodes: [], cases: [] }
           : {
               id: crypto.randomUUID(),
               name,
@@ -233,7 +242,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
     }
     try {
       const saved = await updateAssetDraft(selectedAsset.id, {
-        draft_json: buildDraft(selectedAsset, nodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText, inputSchemaText, resourceLocksText, lockWaitTimeoutText),
+        draft_json: buildDraft(selectedAsset, nodes, suiteSetupNodes, suiteCleanupNodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText, inputSchemaText, resourceLocksText, lockWaitTimeoutText),
         expected_draft_version: selectedAsset.draft_version,
       });
       setSelectedAsset({ ...selectedAsset, draft_version: saved.draft_version });
@@ -254,7 +263,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
     }
     try {
       const saved = await updateAssetDraft(selectedAsset.id, {
-        draft_json: buildDraft(selectedAsset, nodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText, inputSchemaText, resourceLocksText, lockWaitTimeoutText),
+        draft_json: buildDraft(selectedAsset, nodes, suiteSetupNodes, suiteCleanupNodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText, inputSchemaText, resourceLocksText, lockWaitTimeoutText),
         expected_draft_version: selectedAsset.draft_version,
       });
       const nextVersion = saved.draft_version as number;
@@ -308,7 +317,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
       let revisionId = selectedRevisionId;
       if (canEdit) {
         const saved = await updateAssetDraft(selectedAsset.id, {
-          draft_json: buildDraft(selectedAsset, nodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText, inputSchemaText, resourceLocksText, lockWaitTimeoutText),
+          draft_json: buildDraft(selectedAsset, nodes, suiteSetupNodes, suiteCleanupNodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText, inputSchemaText, resourceLocksText, lockWaitTimeoutText),
           expected_draft_version: selectedAsset.draft_version,
         });
         const nextVersion = saved.draft_version as number;
@@ -399,8 +408,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
       ...selectedNode,
       config: { ...selectedNode.config, [key]: value },
     };
-    setSelectedNode(updated);
-    setNodes(nodes.map((n) => (n.id === updated.id ? updated : n)));
+    updateSelectedNode(updated);
   };
 
   const updateWaitTarget = (target: 'api' | 'mysql' | 'mongodb') => {
@@ -409,8 +417,20 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
       ...selectedNode,
       config: { ...selectedNode.config, target, connection_id: '' },
     };
+    updateSelectedNode(updated);
+  };
+
+  const selectNode = (scope: 'case' | 'suite_setup' | 'suite_cleanup', node: NodeInstance | null) => {
+    setSelectedNodeScope(scope);
+    setSelectedNode(node);
+  };
+
+  const updateSelectedNode = (updated: NodeInstance) => {
     setSelectedNode(updated);
-    setNodes(nodes.map((node) => node.id === updated.id ? updated : node));
+    const replace = (current: NodeInstance[]) => current.map((node) => node.id === updated.id ? updated : node);
+    if (selectedNodeScope === 'suite_setup') setSuiteSetupNodes(replace);
+    else if (selectedNodeScope === 'suite_cleanup') setSuiteCleanupNodes(replace);
+    else setNodes(replace);
   };
 
   return (
@@ -632,6 +652,38 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
                 onCommit={setSuiteVariables}
                 onValidationChange={setVariableEditorError}
               />}
+              <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+                <div>
+                  <h4 className="text-xs font-semibold text-slate-200">Suite lifecycle hooks</h4>
+                  <p className="mt-1 text-[10px] leading-4 text-slate-500">Setup runs once before case iterations. Cleanup runs once afterward, including when setup, a case, or cancellation ends the main run.</p>
+                </div>
+                <details className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+                  <summary className="cursor-pointer text-xs font-semibold text-slate-300">Suite setup · {suiteSetupNodes.length} steps</summary>
+                  <div className="mt-3 min-h-64">
+                    <WorkflowCanvas
+                      nodes={suiteSetupNodes}
+                      onChange={setSuiteSetupNodes}
+                      onSelectNode={(node) => selectNode('suite_setup', node)}
+                      selectedNodeId={selectedNodeScope === 'suite_setup' ? selectedNode?.id || null : null}
+                      readOnly={!canEdit}
+                      hidePhase
+                    />
+                  </div>
+                </details>
+                <details className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+                  <summary className="cursor-pointer text-xs font-semibold text-slate-300">Suite cleanup · {suiteCleanupNodes.length} steps</summary>
+                  <div className="mt-3 min-h-64">
+                    <WorkflowCanvas
+                      nodes={suiteCleanupNodes}
+                      onChange={setSuiteCleanupNodes}
+                      onSelectNode={(node) => selectNode('suite_cleanup', node)}
+                      selectedNodeId={selectedNodeScope === 'suite_cleanup' ? selectedNode?.id || null : null}
+                      readOnly={!canEdit}
+                      hidePhase
+                    />
+                  </div>
+                </details>
+              </section>
               <div className="grid grid-cols-[1fr_180px] gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
                 <label className="block text-xs font-semibold text-slate-300">Exclusive resource locks (one per line)
                   <textarea
@@ -671,8 +723,8 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
             <WorkflowCanvas
               nodes={nodes}
               onChange={setNodes}
-              onSelectNode={setSelectedNode}
-              selectedNodeId={selectedNode?.id || null}
+              onSelectNode={(node) => selectNode('case', node)}
+              selectedNodeId={selectedNodeScope === 'case' ? selectedNode?.id || null : null}
               readOnly={!canEdit}
             />
           ) : (
@@ -700,21 +752,19 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
                 <label className="mt-3 block text-xs font-semibold text-slate-300">Step name
                   <input value={selectedNode.name} maxLength={128} onChange={(event) => {
                     const updated = { ...selectedNode, name: event.target.value };
-                    setSelectedNode(updated);
-                    setNodes(nodes.map((node) => node.id === updated.id ? updated : node));
+                    updateSelectedNode(updated);
                   }} className="input-field mt-1.5 text-xs" />
                 </label>
-                <label className="mt-3 block text-xs font-semibold text-slate-300">Execution phase
+                {selectedNodeScope === 'case' && <label className="mt-3 block text-xs font-semibold text-slate-300">Execution phase
                   <select value={selectedNode.phase || 'main'} onChange={(event) => {
                     const updated = { ...selectedNode, phase: event.target.value as 'setup' | 'main' | 'cleanup' };
-                    setSelectedNode(updated);
-                    setNodes(nodes.map((node) => node.id === updated.id ? updated : node));
+                    updateSelectedNode(updated);
                   }} className="input-field mt-1.5 text-xs">
                     <option value="setup">Setup · runs before main steps</option>
                     <option value="main">Main · skipped if setup fails</option>
                     <option value="cleanup">Cleanup · runs after failures and cancellation</option>
                   </select>
-                </label>
+                </label>}
               </div>
 
               {['api.request', 'wait.until', 'db.mysql', 'db.mongodb', 'data.tabular'].includes(selectedNode.type) && (
@@ -842,8 +892,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
               <label className="block text-xs font-semibold text-slate-300">Step timeout (seconds)
                 <input type="number" min={1} max={3600} value={selectedNode.timeout_seconds || 30} onChange={(event) => {
                   const updated = { ...selectedNode, timeout_seconds: Number(event.target.value) };
-                  setSelectedNode(updated);
-                  setNodes(nodes.map((node) => node.id === updated.id ? updated : node));
+                  updateSelectedNode(updated);
                 }} className="input-field mt-1.5 text-xs font-mono" />
               </label>
               {selectedAsset?.kind === 'case' && <section className="border-t border-slate-800 pt-4">
@@ -987,6 +1036,8 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
 function buildDraft(
   asset: Asset,
   nodes: NodeInstance[],
+  suiteSetupNodes: NodeInstance[],
+  suiteCleanupNodes: NodeInstance[],
   suiteCases: Array<{ case_id: string; revision_id?: string; ordinal: number }>,
   caseVariables: Record<string, any>,
   suiteVariables: Record<string, any>,
@@ -1004,6 +1055,8 @@ function buildDraft(
       execution_mode: 'sequential',
       variables: suiteVariables,
       input_schema: inputSchema,
+      setup_nodes: suiteSetupNodes,
+      cleanup_nodes: suiteCleanupNodes,
       resource_locks: parseResourceLocks(resourceLocksText),
       lock_wait_timeout_seconds: parseLockWaitTimeout(lockWaitTimeoutText),
       cases: suiteCases.map((item, ordinal) => ({ ...item, ordinal })),

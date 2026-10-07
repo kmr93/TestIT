@@ -19,6 +19,7 @@ interface WorkflowCanvasProps {
   onSelectNode: (node: NodeInstance | null) => void;
   selectedNodeId: string | null;
   readOnly?: boolean;
+  hidePhase?: boolean;
 }
 
 export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
@@ -27,6 +28,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
   onSelectNode,
   selectedNodeId,
   readOnly = false,
+  hidePhase = false,
 }) => {
   const getNodeIcon = (type: string) => {
     switch (type) {
@@ -64,7 +66,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
       type,
       type_version: 1,
       name,
-      phase: 'main',
+      ...(!hidePhase ? { phase: 'main' as const } : {}),
       timeout_seconds: 30,
       config,
       position: { x: 50, y: nodes.length * 100 + 50 },

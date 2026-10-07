@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -103,6 +102,7 @@ pub struct CaseRunRecord {
     pub id: String,
     pub suite_run_id: String,
     pub case_revision_id: String,
+    pub execution_scope: String,
     pub ordinal: i64,
     pub iteration_index: i64,
     pub status: String,

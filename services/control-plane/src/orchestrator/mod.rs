@@ -608,6 +608,16 @@ impl Orchestrator {
                     return;
                 }
             };
+        let suite_setup_nodes = suite_def
+            .get("setup_nodes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let suite_cleanup_nodes = suite_def
+            .get("cleanup_nodes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         let resource_keys = resource_names
             .iter()
             .map(|name| format!("{}|{}", run.workspace_id, name.to_ascii_lowercase()))
@@ -800,7 +810,9 @@ impl Orchestrator {
                         .and_then(Value::as_array)
                         .map_or(0, Vec::len)
             })
-            .sum();
+            .sum::<usize>()
+            + suite_setup_nodes.len()
+            + suite_cleanup_nodes.len();
         if total_cases == 0 || total_cases > 500 {
             self.fail_run(
                 &run_id,
@@ -813,6 +825,8 @@ impl Orchestrator {
             manifest["datasets"] = json!(dataset_manifest);
             manifest["planned_case_iterations"] = json!(total_cases);
             manifest["planned_node_invocations"] = json!(total_steps);
+            manifest["suite_setup_nodes"] = json!(suite_setup_nodes.len());
+            manifest["suite_cleanup_nodes"] = json!(suite_cleanup_nodes.len());
             let _ = sqlx::query("UPDATE suite_runs SET run_manifest_json = ? WHERE id = ?")
                 .bind(manifest.to_string())
                 .bind(&run_id)
@@ -885,23 +899,42 @@ impl Orchestrator {
                     return;
                 }
             };
+        suite_context.suite_vars = suite_vars.clone();
 
+        let mut seq = 3i64;
+        let suite_setup_status = self
+            .execute_suite_hook_nodes(
+                &run_id,
+                &run.suite_revision_id,
+                "suite_setup",
+                &suite_setup_nodes,
+                &mut suite_context,
+                &mut seq,
+                false,
+            )
+            .await;
+        let mut suite_status = suite_setup_status.clone();
         let mut passed_cases = 0;
         let mut failed_cases = 0;
         let mut errored_cases = 0;
-        let mut suite_status = "PASSED";
-
-        let mut seq = 3i64;
+        let mut canceled_cases = 0;
+        let mut skipped_cases = 0;
         let mut ordinal = 0usize;
-        'case_plan: for (case_id, case_revision_id, case_def, rows, _checksum) in case_plan {
+        'case_plan: for (case_id, case_revision_id, case_def, rows, _checksum) in &case_plan {
             for (iteration_index, row) in rows {
+                if suite_status != "PASSED" {
+                    break 'case_plan;
+                }
                 if self.run_is_canceled(&run_id).await {
-                    suite_status = "CANCELED";
+                    suite_status = "CANCELED".to_string();
                     break 'case_plan;
                 }
                 let permit = match self.semaphore.clone().acquire_owned().await {
                     Ok(p) => p,
-                    Err(_) => break 'case_plan,
+                    Err(_) => {
+                        suite_status = "ERROR".to_string();
+                        break 'case_plan;
+                    }
                 };
                 let case_run_id = Uuid::new_v4().to_string();
                 let iteration_id = Uuid::new_v4().to_string();
@@ -914,9 +947,9 @@ impl Orchestrator {
                 )
                 .bind(&case_run_id)
                 .bind(&run_id)
-                .bind(&case_revision_id)
+                .bind(case_revision_id)
                 .bind(ordinal as i64)
-                .bind(iteration_index as i64)
+                .bind(*iteration_index as i64)
                 .bind(report_inputs.to_string())
                 .bind(&case_started)
                 .execute(&self.state.db)
@@ -937,10 +970,11 @@ impl Orchestrator {
                     .fold(run.random_seed as u64, |seed, byte| {
                         seed.wrapping_mul(31).wrapping_add(byte as u64)
                     });
-                context.seed = case_seed.wrapping_add(iteration_index as u64);
+                context.seed = case_seed.wrapping_add(*iteration_index as u64);
                 context.env_vars = env_vars.clone();
                 context.run_vars = run_vars.clone();
                 context.suite_vars = suite_vars.clone();
+                context.step_outputs = suite_context.step_outputs.clone();
                 context.iteration_vars = row
                     .as_object()
                     .cloned()
@@ -997,16 +1031,19 @@ impl Orchestrator {
                     "FAILED" => {
                         failed_cases += 1;
                         if suite_status == "PASSED" {
-                            suite_status = "FAILED";
+                            suite_status = "FAILED".to_string();
                         }
                     }
                     "ERROR" => {
                         errored_cases += 1;
                         if suite_status != "CANCELED" {
-                            suite_status = "ERROR";
+                            suite_status = "ERROR".to_string();
                         }
                     }
-                    "CANCELED" => suite_status = "CANCELED",
+                    "CANCELED" => {
+                        canceled_cases += 1;
+                        suite_status = "CANCELED".to_string();
+                    }
                     _ => {}
                 }
                 let _ =
@@ -1039,10 +1076,38 @@ impl Orchestrator {
             }
         }
 
+        if ordinal < total_cases {
+            let reason = if suite_setup_status != "PASSED" {
+                "Suite setup did not pass"
+            } else if suite_status == "CANCELED" {
+                "Run was canceled before this case iteration began"
+            } else {
+                "Run stopped before this case iteration began"
+            };
+            skipped_cases += self
+                .record_skipped_case_plan(&run_id, &case_plan, ordinal, reason, &mut seq)
+                .await;
+        }
+
+        let suite_cleanup_status = self
+            .execute_suite_hook_nodes(
+                &run_id,
+                &run.suite_revision_id,
+                "suite_cleanup",
+                &suite_cleanup_nodes,
+                &mut suite_context,
+                &mut seq,
+                true,
+            )
+            .await;
+        if suite_status == "PASSED" && suite_cleanup_status != "PASSED" {
+            suite_status = suite_cleanup_status;
+        }
+
         // Finalize suite run
         let finish_time = Utc::now().to_rfc3339();
         let _ = sqlx::query("UPDATE suite_runs SET status = CASE WHEN status = 'CANCELED' THEN 'CANCELED' ELSE ? END, finished_at = ? WHERE id = ?")
-            .bind(suite_status)
+            .bind(&suite_status)
             .bind(&finish_time)
             .bind(&run_id)
             .execute(&self.state.db)
@@ -1070,7 +1135,9 @@ impl Orchestrator {
             "cases_passed": passed_cases,
             "cases_failed": failed_cases,
             "cases_errored": errored_cases,
-            "cases_completed": passed_cases + failed_cases + errored_cases
+            "cases_canceled": canceled_cases,
+            "cases_skipped": skipped_cases,
+            "cases_completed": passed_cases + failed_cases + errored_cases + canceled_cases + skipped_cases
         });
 
         seq += 1;
@@ -1098,6 +1165,180 @@ impl Orchestrator {
             "SuiteRun {} completed with status: {}",
             run_id, terminal_status
         );
+    }
+
+    async fn execute_suite_hook_nodes(
+        &self,
+        run_id: &str,
+        suite_revision_id: &str,
+        execution_scope: &str,
+        nodes: &[Value],
+        context: &mut ResolutionContext,
+        seq: &mut i64,
+        cleanup: bool,
+    ) -> String {
+        if nodes.is_empty() {
+            return "PASSED".to_string();
+        }
+        let hook_run_id = Uuid::new_v4().to_string();
+        let started_at = Utc::now().to_rfc3339();
+        let (ordinal, iteration_index) = if execution_scope == "suite_setup" {
+            (-2, -1)
+        } else {
+            (i64::MAX, -2)
+        };
+        let inserted = sqlx::query(
+            "INSERT INTO case_runs (id, suite_run_id, case_revision_id, execution_scope, ordinal, iteration_index, status, inputs_json, started_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'RUNNING', ?, ?)",
+        )
+        .bind(&hook_run_id)
+        .bind(run_id)
+        .bind(suite_revision_id)
+        .bind(execution_scope)
+        .bind(ordinal)
+        .bind(iteration_index)
+        .bind(json!({ "execution_scope": execution_scope }).to_string())
+        .bind(&started_at)
+        .execute(&self.state.db)
+        .await;
+        if !inserted.is_ok_and(|result| result.rows_affected() == 1) {
+            return "ERROR".to_string();
+        }
+
+        *seq += 1;
+        self.emit_event(
+            run_id,
+            *seq,
+            "suite.hook.started",
+            json!({ "suite_hook_run_id": hook_run_id, "scope": execution_scope, "status": "RUNNING" }),
+        )
+        .await;
+        let indexed_nodes = nodes.iter().cloned().enumerate().collect::<Vec<_>>();
+        let status = self
+            .execute_node_group(run_id, &hook_run_id, &indexed_nodes, context, seq, cleanup)
+            .await;
+        let finished_at = Utc::now().to_rfc3339();
+        let _ = sqlx::query("UPDATE case_runs SET status = ?, finished_at = ? WHERE id = ?")
+            .bind(&status)
+            .bind(&finished_at)
+            .bind(&hook_run_id)
+            .execute(&self.state.db)
+            .await;
+        *seq += 1;
+        self.emit_event(
+            run_id,
+            *seq,
+            "suite.hook.finished",
+            json!({
+                "suite_hook_run_id": hook_run_id,
+                "scope": execution_scope,
+                "status": status,
+                "finished_at": finished_at
+            }),
+        )
+        .await;
+        status
+    }
+
+    async fn record_skipped_case_plan(
+        &self,
+        run_id: &str,
+        case_plan: &[(String, String, Value, Vec<(usize, Value)>, String)],
+        start_ordinal: usize,
+        reason: &str,
+        seq: &mut i64,
+    ) -> usize {
+        let mut ordinal = 0usize;
+        let mut skipped = 0usize;
+        for (case_id, case_revision_id, case_definition, rows, _) in case_plan {
+            let nodes = case_definition
+                .get("nodes")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            for (iteration_index, row) in rows {
+                if ordinal >= start_ordinal {
+                    let case_run_id = Uuid::new_v4().to_string();
+                    let iteration_id = Uuid::new_v4().to_string();
+                    let finished_at = Utc::now().to_rfc3339();
+                    let inputs = json!({
+                        "iteration_id": iteration_id,
+                        "row": row,
+                        "skip_reason": reason
+                    });
+                    let inserted = sqlx::query(
+                        "INSERT INTO case_runs (id, suite_run_id, case_revision_id, ordinal, iteration_index, status, inputs_json, finished_at)
+                         VALUES (?, ?, ?, ?, ?, 'SKIPPED', ?, ?)",
+                    )
+                    .bind(&case_run_id)
+                    .bind(run_id)
+                    .bind(case_revision_id)
+                    .bind(ordinal as i64)
+                    .bind(*iteration_index as i64)
+                    .bind(inputs.to_string())
+                    .bind(&finished_at)
+                    .execute(&self.state.db)
+                    .await;
+                    if inserted.is_err() {
+                        warn!("Could not record skipped case iteration for run {}", run_id);
+                        ordinal += 1;
+                        continue;
+                    }
+                    let error =
+                        json!({ "code": "CASE_NOT_STARTED", "message": reason }).to_string();
+                    for (step_ordinal, node) in nodes.iter().enumerate() {
+                        let step_run_id = Uuid::new_v4().to_string();
+                        let node_name = node.get("name").and_then(Value::as_str).unwrap_or("Node");
+                        let _ = sqlx::query(
+                            "INSERT INTO step_runs (id, case_run_id, node_id, node_name, node_type, ordinal, attempt, status, error_json, finished_at)
+                             VALUES (?, ?, ?, ?, ?, ?, 1, 'SKIPPED', ?, ?)",
+                        )
+                        .bind(&step_run_id)
+                        .bind(&case_run_id)
+                        .bind(node.get("id").and_then(Value::as_str).unwrap_or("unknown"))
+                        .bind(node_name)
+                        .bind(node.get("type").and_then(Value::as_str).unwrap_or("unknown"))
+                        .bind(step_ordinal as i64)
+                        .bind(&error)
+                        .bind(&finished_at)
+                        .execute(&self.state.db)
+                        .await;
+                        *seq += 1;
+                        self.emit_event(
+                            run_id,
+                            *seq,
+                            "step.finished",
+                            json!({
+                                "step_run_id": step_run_id,
+                                "node_name": node_name,
+                                "status": "SKIPPED",
+                                "error": reason
+                            }),
+                        )
+                        .await;
+                    }
+                    *seq += 1;
+                    self.emit_event(
+                        run_id,
+                        *seq,
+                        "case.finished",
+                        json!({
+                            "case_run_id": case_run_id,
+                            "case_id": case_id,
+                            "ordinal": ordinal,
+                            "iteration_index": iteration_index,
+                            "status": "SKIPPED",
+                            "finished_at": finished_at,
+                            "skip_reason": reason
+                        }),
+                    )
+                    .await;
+                    skipped += 1;
+                }
+                ordinal += 1;
+            }
+        }
+        skipped
     }
 
     async fn execute_case_nodes(
@@ -1132,6 +1373,15 @@ impl Orchestrator {
             case_status = self
                 .execute_node_group(run_id, case_run_id, &main_nodes, context, seq, false)
                 .await;
+        } else {
+            self.record_skipped_nodes(
+                run_id,
+                case_run_id,
+                &main_nodes,
+                "Case setup did not pass",
+                seq,
+            )
+            .await;
         }
 
         // Cleanup nodes run after setup or main failure and after cancellation. The
@@ -1155,8 +1405,16 @@ impl Orchestrator {
         seq: &mut i64,
         cleanup: bool,
     ) -> String {
-        for (ord, node) in nodes {
+        for (position, (ord, node)) in nodes.iter().enumerate() {
             if !cleanup && self.run_is_canceled(run_id).await {
+                self.record_skipped_nodes(
+                    run_id,
+                    case_run_id,
+                    &nodes[position..],
+                    "Run was canceled before this step began",
+                    seq,
+                )
+                .await;
                 return "CANCELED".to_string();
             }
             let node_id = node.get("id").and_then(|i| i.as_str()).unwrap_or("unknown");
@@ -1224,6 +1482,14 @@ impl Orchestrator {
             .await;
 
             if step_status != "SUCCEEDED" {
+                self.record_skipped_nodes(
+                    run_id,
+                    case_run_id,
+                    &nodes[position + 1..],
+                    "A prior step in this phase did not pass",
+                    seq,
+                )
+                .await;
                 let case_status = match step_status.as_str() {
                     "ASSERTION_FAILED" => "FAILED",
                     "CANCELED" => "CANCELED",
@@ -1234,6 +1500,48 @@ impl Orchestrator {
         }
 
         "PASSED".to_string()
+    }
+
+    async fn record_skipped_nodes(
+        &self,
+        run_id: &str,
+        case_run_id: &str,
+        nodes: &[(usize, Value)],
+        reason: &str,
+        seq: &mut i64,
+    ) {
+        let finished_at = Utc::now().to_rfc3339();
+        let error = json!({ "code": "STEP_NOT_STARTED", "message": reason }).to_string();
+        for (ordinal, node) in nodes {
+            let step_run_id = Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                "INSERT INTO step_runs (id, case_run_id, node_id, node_name, node_type, ordinal, attempt, status, error_json, finished_at)
+                 VALUES (?, ?, ?, ?, ?, ?, 1, 'SKIPPED', ?, ?)",
+            )
+            .bind(&step_run_id)
+            .bind(case_run_id)
+            .bind(node.get("id").and_then(Value::as_str).unwrap_or("unknown"))
+            .bind(node.get("name").and_then(Value::as_str).unwrap_or("Node"))
+            .bind(node.get("type").and_then(Value::as_str).unwrap_or("unknown"))
+            .bind(*ordinal as i64)
+            .bind(&error)
+            .bind(&finished_at)
+            .execute(&self.state.db)
+            .await;
+            *seq += 1;
+            self.emit_event(
+                run_id,
+                *seq,
+                "step.finished",
+                json!({
+                    "step_run_id": step_run_id,
+                    "node_name": node.get("name").and_then(Value::as_str).unwrap_or("Node"),
+                    "status": "SKIPPED",
+                    "error": reason
+                }),
+            )
+            .await;
+        }
     }
 
     async fn dispatch_node_execution(
@@ -1551,7 +1859,7 @@ impl Orchestrator {
                     "A configured value references a missing or invalid variable",
                 )
             })?;
-        let mut node_config = resolved_node_config
+        let node_config = resolved_node_config
             .as_object()
             .cloned()
             .unwrap_or_default();
@@ -1760,7 +2068,7 @@ impl Orchestrator {
         }
 
         let case_statuses = sqlx::query_as::<_, (String, i64)>(
-            "SELECT status, COUNT(*) FROM case_runs WHERE suite_run_id = ? GROUP BY status",
+            "SELECT status, COUNT(*) FROM case_runs WHERE suite_run_id = ? AND execution_scope = 'case' GROUP BY status",
         )
         .bind(run_id)
         .fetch_all(&mut *tx)
@@ -1834,7 +2142,7 @@ impl Orchestrator {
             0
         };
         let current_case = sqlx::query_scalar::<_, String>(
-            "SELECT assets.name FROM case_runs cases JOIN asset_revisions revisions ON revisions.id = cases.case_revision_id JOIN assets ON assets.id = revisions.asset_id WHERE cases.suite_run_id = ? AND cases.status = 'RUNNING' ORDER BY cases.ordinal DESC LIMIT 1",
+            "SELECT CASE cases.execution_scope WHEN 'suite_setup' THEN 'Suite setup' WHEN 'suite_cleanup' THEN 'Suite cleanup' ELSE assets.name END FROM case_runs cases LEFT JOIN asset_revisions revisions ON revisions.id = cases.case_revision_id LEFT JOIN assets ON assets.id = revisions.asset_id WHERE cases.suite_run_id = ? AND cases.status = 'RUNNING' ORDER BY cases.started_at DESC LIMIT 1",
         )
         .bind(run_id)
         .fetch_optional(&mut *tx)
