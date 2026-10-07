@@ -23,6 +23,7 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub db: DbPool,
     pub nats: Option<async_nats::Client>,
+    pub nats_sse: Option<async_nats::Client>,
 }
 
 #[tokio::main]
@@ -72,10 +73,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    let nats_sse_connection = match (
+        config.nats_sse_user.as_ref(),
+        config.nats_sse_password.as_ref(),
+    ) {
+        (Some(user), Some(password)) => {
+            async_nats::ConnectOptions::with_user_and_password(user.clone(), password.clone())
+                .connect(&config.nats_url)
+                .await
+        }
+        _ => async_nats::connect(&config.nats_url).await,
+    };
+    let nats_sse = match nats_sse_connection {
+        Ok(client) => {
+            info!("Connected to private NATS SSE subscription account");
+            Some(client)
+        }
+        Err(error) => {
+            warn!(
+                "NATS SSE subscription unavailable ({}); SSE will use SQLite polling",
+                error
+            );
+            None
+        }
+    };
+
     let app_state = AppState {
         config: config.clone(),
         db: db.clone(),
         nats: nats_client,
+        nats_sse,
     };
 
     Orchestrator::recover_interrupted_runs(&app_state).await?;

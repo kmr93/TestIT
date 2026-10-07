@@ -81,7 +81,7 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose, 
       try {
         const latest = await getRunStats(runId);
         if (!active) return;
-        setSnapshot(latest);
+        setSnapshot((previous: any) => ({ ...previous, ...latest }));
         setStatus(latest.status);
         setPollFailed(false);
         setLastPollAt(Date.now());
@@ -121,6 +121,14 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose, 
         // A later snapshot or the bounded poll will recover state.
       }
     });
+    stream.addEventListener('run.transport', (event) => {
+      try {
+        const transport = JSON.parse((event as MessageEvent).data);
+        setSnapshot((previous: any) => ({ ...previous, event_transport: transport.mode }));
+      } catch {
+        // Transport state is informational; the snapshot and polling remain usable.
+      }
+    });
     [
       'run.started',
       'run.waiting_for_resource',
@@ -153,9 +161,9 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose, 
   const isTerminal = ['PASSED', 'FAILED', 'ERROR', 'CANCELED', 'INTERRUPTED'].includes(status);
   const pollingAge = lastPollAt === null ? null : Math.max(0, Math.floor((now - lastPollAt) / 1000));
   const connectionLabel = isConnected
-    ? 'Live stream'
+    ? snapshot?.event_transport === 'sqlite_polling' ? 'SQLite event fallback' : 'NATS + SQLite replay'
     : pollingAge !== null && pollingAge <= 6 && !pollFailed
-      ? 'Polling fallback'
+      ? 'HTTP polling fallback'
       : 'Data may be stale';
   const nodeTotal = count(progress.planned_nodes);
   const nodeDone = count(progress.terminal_nodes);
@@ -179,7 +187,7 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose, 
       await cancelRun(runId);
       setStatus('CANCELED');
       const latest = await getRunStats(runId);
-      setSnapshot(latest);
+      setSnapshot((previous: any) => ({ ...previous, ...latest }));
       setStatus(latest.status);
     } catch (error) {
       setMonitorError(error instanceof Error ? error.message : 'Unable to cancel this run.');
@@ -191,7 +199,7 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose, 
   const refreshNow = async () => {
     try {
       const latest = await getRunStats(runId);
-      setSnapshot(latest);
+      setSnapshot((previous: any) => ({ ...previous, ...latest }));
       setStatus(latest.status);
       setPollFailed(false);
       setLastPollAt(Date.now());
@@ -259,7 +267,7 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose, 
               <h2 className="truncate text-base font-semibold text-slate-100">{run.suite_name || 'Suite run'}</h2>
               <span className={'badge badge-' + status.toLowerCase()}>{status}</span>
               <span className={'inline-flex items-center gap-1.5 text-[11px] ' + (pollingAge !== null && pollingAge > 6 ? 'text-amber-300' : 'text-slate-400')}>
-                {connectionLabel === 'Live stream' ? <Radio className="h-3.5 w-3.5 text-emerald-400" /> : connectionLabel === 'Polling fallback' ? <RefreshCw className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
+                {connectionLabel.includes('NATS') ? <Radio className="h-3.5 w-3.5 text-emerald-400" /> : connectionLabel.includes('fallback') || connectionLabel.includes('SQLite') ? <RefreshCw className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
                 {connectionLabel}
               </span>
             </div>

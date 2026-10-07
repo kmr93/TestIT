@@ -5,8 +5,10 @@ use axum::{
     response::{IntoResponse, Response},
     Extension, Json,
 };
+use futures::StreamExt;
 use serde_json::{json, Value};
 use std::{convert::Infallible, time::Duration};
+use tracing::warn;
 
 use crate::{
     api::auth::AuthenticatedUser,
@@ -57,7 +59,26 @@ pub async fn run_events_stream(
 
     let db = state.db.clone();
     let target_run_id = run_id;
+    let target_workspace_id = user.workspace_id.clone();
+    let nats_client = state.nats_sse.clone();
     let stream = async_stream::stream! {
+        let subject = format!("automation.v1.{}.runs.{}.stats", target_workspace_id, target_run_id);
+        let mut subscriber = if let Some(client) = nats_client {
+            match client.subscribe(subject).await {
+                Ok(subscriber) => Some(subscriber),
+                Err(error) => {
+                    warn!("Could not subscribe to the run-stat subject; using SQLite polling: {}", error);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let mut transport_mode = if subscriber.is_some() { "nats" } else { "sqlite_polling" };
+        yield Ok::<Event, Infallible>(Event::default()
+            .event("run.transport")
+            .data(json!({ "mode": transport_mode }).to_string()));
+
         // A new client can start from the latest snapshot. A reconnecting client
         // must receive every durable event after its cursor instead.
         let mut last_seq = if let Some(cursor) = resume_from {
@@ -76,7 +97,8 @@ pub async fn run_events_stream(
                     "progress": serde_json::from_str::<Value>(&snapshot.progress_json).unwrap_or(json!({})),
                     "stats": serde_json::from_str::<Value>(&snapshot.stats_json).unwrap_or(json!({})),
                     "last_sequence": snapshot.last_sequence,
-                    "updated_at": snapshot.updated_at
+                    "updated_at": snapshot.updated_at,
+                    "event_transport": transport_mode
                 });
                 yield Ok::<Event, Infallible>(Event::default()
                     .event("run.snapshot")
@@ -90,7 +112,28 @@ pub async fn run_events_stream(
 
         let mut interval = tokio::time::interval(Duration::from_millis(500));
         loop {
-            interval.tick().await;
+            let (should_poll, subscriber_closed) = if let Some(nats_subscriber) = subscriber.as_mut() {
+                tokio::select! {
+                    _ = interval.tick() => (true, false),
+                    message = nats_subscriber.next() => match message {
+                        Some(message) => (valid_run_event_message(&message.payload, &target_run_id), false),
+                        None => (true, true),
+                    }
+                }
+            } else {
+                interval.tick().await;
+                (true, false)
+            };
+            if subscriber_closed {
+                subscriber = None;
+                transport_mode = "sqlite_polling";
+                yield Ok::<Event, Infallible>(Event::default()
+                    .event("run.transport")
+                    .data(json!({ "mode": transport_mode }).to_string()));
+            }
+            if !should_poll {
+                continue;
+            }
 
             let events = sqlx::query_as::<_, RunEventRecord>(
                 "SELECT * FROM run_events WHERE suite_run_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT 100"
@@ -138,4 +181,57 @@ pub async fn run_events_stream(
                 .text("heartbeat"),
         )
         .into_response()
+}
+
+fn valid_run_event_message(payload: &[u8], run_id: &str) -> bool {
+    if payload.len() > 64 * 1024 {
+        return false;
+    }
+    let Ok(message) = serde_json::from_slice::<Value>(payload) else {
+        return false;
+    };
+    message.get("schema_version").and_then(Value::as_i64) == Some(1)
+        && message.get("run_id").and_then(Value::as_str) == Some(run_id)
+        && message
+            .get("sequence")
+            .and_then(Value::as_i64)
+            .is_some_and(|sequence| sequence > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_run_event_message;
+
+    #[test]
+    fn accepts_wakeup_for_expected_run() {
+        let payload = br#"{"schema_version":1,"run_id":"run-1","sequence":4}"#;
+        assert!(valid_run_event_message(payload, "run-1"));
+    }
+
+    #[test]
+    fn rejects_malformed_or_unexpected_wakeups() {
+        assert!(!valid_run_event_message(b"not json", "run-1"));
+        assert!(!valid_run_event_message(
+            br#"{"schema_version":2,"run_id":"run-1","sequence":4}"#,
+            "run-1"
+        ));
+        assert!(!valid_run_event_message(
+            br#"{"schema_version":1,"run_id":"other-run","sequence":4}"#,
+            "run-1"
+        ));
+        assert!(!valid_run_event_message(
+            br#"{"schema_version":1,"run_id":"run-1","sequence":0}"#,
+            "run-1"
+        ));
+        assert!(!valid_run_event_message(
+            br#"{"schema_version":1,"run_id":"run-1"}"#,
+            "run-1"
+        ));
+    }
+
+    #[test]
+    fn rejects_oversized_wakeups() {
+        let payload = vec![b' '; 64 * 1024 + 1];
+        assert!(!valid_run_event_message(&payload, "run-1"));
+    }
 }

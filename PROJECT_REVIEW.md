@@ -15,9 +15,9 @@
 - Added Cassandra connection profiles, verified-TLS read-only CQL checks and wait-until polling, with bound parameters, row/output bounds, selected columns, and isolated-worker egress validation.
 - Reworked OpenAPI JSON import to validate bounded 3.0/3.1 documents, reject remote references, retain local parameters and JSON schemas, create editable case drafts instead of orphan templates, preserve the source checksum/version, and audit transactional imports. Imported requests now expose path/query parameters and validate request/response bodies against their schemas.
 - Rebuilt the run monitor as a full desktop report surface with overview, timeline, and statistics tabs; exact case/node progress, live/polling/stale connection state, elapsed/run metadata, status counters, and API status/latency aggregates. The workflow node library now wraps at the supported desktop width and is hidden for read-only users.
-- Added environment-provided NATS publisher credentials, a minimum password length, and a subject permission that allows publishing run-stat snapshots while denying subscriptions. Compose now requires the credentials; the control-plane log no longer prints the configured NATS URL.
+- Added separate environment-provided NATS publisher and SSE subscriber credentials, a minimum password length, and subject permissions that restrict the publisher to run-stat messages and the subscriber to read-only run-stat subscriptions. NATS messages wake SSE streams, which always replay ordered durable events from SQLite and fall back to SQLite polling when unavailable. Compose requires both identities; the control-plane log no longer prints the configured NATS URL.
 - Bundles do not include run history, reports/artifacts, scripts, or a SQLite snapshot. The importer currently accepts the uncompressed ZIP format produced by this application; external deflated ZIPs are not accepted.
-- Current verification for this pass: `cargo fmt --all -- --check`, `cargo check --tests --workspace --locked`, `npm run build`, `python -m compileall -q workers/python deploy/worker-manager`, `docker compose --env-file .env.example config --quiet`, and `git diff --check` passed. Compose config rendering emitted a warning because the local Docker CLI config was inaccessible. No containers or NATS server were started; Rust runtime tests and browser interaction were not run.
+- Current verification for this pass: `cargo fmt --all -- --check`, `cargo check --tests --workspace --locked`, `npm run build`, `python -m compileall -q workers/python deploy/worker-manager`, `docker compose --env-file .env.example config --quiet`, and `git diff --check` passed. NATS wakeup validator tests type-check, but the focused `cargo test` build was stopped during test-binary compilation and the tests did not execute. Compose config rendering emitted a warning because the local Docker CLI config was inaccessible. No containers or NATS server were started, so ACL parsing, broker outage/reconnect behavior, other Rust runtime tests, and browser interaction were not verified.
 
 ## Implemented in the current tree
 
@@ -45,7 +45,7 @@
 ### Data, reporting, and operations
 
 - Definition-only ZIP bundle import/export with conflict preview and transactional application is implemented. Consistent SQLite backup/restore, retention, SMTP notifications, signed webhook triggers, and schedules are absent.
-- NATS has a subject-restricted authenticated outbox publisher, while SSE resumes durable events from SQLite. NATS consumer fan-out, outage behavior, and notification/outbox recovery still need acceptance work.
+- NATS has separate authenticated publisher and read-only SSE subscriber identities. The subscriber wakes per-run SSE streams; SQLite remains the durable replay source with polling fallback. Broker outage/reconnect and notification/outbox recovery still need runtime acceptance work.
 - Key rotation, an independent workspace-isolation audit, operational alerts/runbook, and disk/retention controls are absent or incomplete.
 
 ### Verification and release confidence

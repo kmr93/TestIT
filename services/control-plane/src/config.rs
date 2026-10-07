@@ -7,6 +7,8 @@ pub struct AppConfig {
     pub nats_url: String,
     pub nats_control_user: Option<String>,
     pub nats_control_password: Option<String>,
+    pub nats_sse_user: Option<String>,
+    pub nats_sse_password: Option<String>,
     pub master_key: [u8; 32],
     pub artifacts_dir: String,
     pub docker_worker_image: String,
@@ -45,6 +47,21 @@ impl AppConfig {
             .is_some_and(|password| password.len() < 32)
         {
             anyhow::bail!("NATS_CONTROL_PASSWORD must contain at least 32 characters");
+        }
+        let nats_sse_user = env::var("NATS_SSE_USER")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        let nats_sse_password = env::var("NATS_SSE_PASSWORD")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        if nats_sse_user.is_some() != nats_sse_password.is_some() {
+            anyhow::bail!("NATS_SSE_USER and NATS_SSE_PASSWORD must be configured together");
+        }
+        if nats_sse_password
+            .as_ref()
+            .is_some_and(|password| password.len() < 32)
+        {
+            anyhow::bail!("NATS_SSE_PASSWORD must contain at least 32 characters");
         }
 
         let master_key_hex = env::var("MASTER_KEY_HEX").map_err(|_| {
@@ -106,6 +123,8 @@ impl AppConfig {
             nats_url,
             nats_control_user,
             nats_control_password,
+            nats_sse_user,
+            nats_sse_password,
             master_key,
             artifacts_dir,
             docker_worker_image,
