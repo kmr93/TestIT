@@ -17,14 +17,17 @@ import {
   testConnection,
   getSecrets,
   createSecret,
+  getResourceLocks,
+  releaseResourceLock,
 } from '../api/client';
 import { InlineAlert } from './InlineAlert';
 
 export const EnvironmentsView: React.FC = () => {
-  const [tab, setTab] = useState<'env' | 'conn' | 'secrets'>('env');
+  const [tab, setTab] = useState<'env' | 'conn' | 'secrets' | 'locks'>('env');
   const [environments, setEnvironments] = useState<any[]>([]);
   const [connections, setConnections] = useState<any[]>([]);
   const [secrets, setSecrets] = useState<any[]>([]);
+  const [resourceLocks, setResourceLocks] = useState<any[]>([]);
 
   // Create form states
   const [newEnvName, setNewEnvName] = useState('');
@@ -48,12 +51,41 @@ export const EnvironmentsView: React.FC = () => {
 
   const loadAll = async () => {
     try {
-      const [e, c, s] = await Promise.all([getEnvironments(), getConnections(), getSecrets()]);
+      const [e, c, s, locks] = await Promise.all([getEnvironments(), getConnections(), getSecrets(), getResourceLocks()]);
       setEnvironments(e);
       setConnections(c);
       setSecrets(s);
+      setResourceLocks(locks);
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Unable to load environments and credentials.');
+    }
+  };
+
+  useEffect(() => {
+    if (tab !== 'locks') return;
+    const refreshLocks = async () => {
+      try {
+        setResourceLocks(await getResourceLocks());
+      } catch (err) {
+        setErrorMessage(err instanceof Error ? err.message : 'Unable to refresh resource locks.');
+      }
+    };
+    void refreshLocks();
+    const timer = window.setInterval(() => void refreshLocks(), 5000);
+    return () => window.clearInterval(timer);
+  }, [tab]);
+
+  const handleReleaseResourceLock = async (lock: any) => {
+    const confirmed = window.confirm(`Review lock ${lock.resource_key} held by run ${lock.run_id}. Release it only if the previous run can no longer affect this resource.`);
+    if (!confirmed) return;
+    const reason = window.prompt('Enter an audit reason for releasing this resource lock:');
+    if (!reason) return;
+    try {
+      await releaseResourceLock({ resource_key: lock.resource_key, reason });
+      await loadAll();
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to release this resource lock.');
+      void loadAll();
     }
   };
 
@@ -176,6 +208,12 @@ export const EnvironmentsView: React.FC = () => {
             }`}
           >
             Encrypted Secrets
+          </button>
+          <button
+            onClick={() => setTab('locks')}
+            className={`px-3 py-1.5 rounded-md font-medium transition-colors ${tab === 'locks' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
+          >
+            Resource Locks
           </button>
         </div>
       </div>
@@ -403,6 +441,39 @@ export const EnvironmentsView: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {tab === 'locks' && (
+        <section className="glass-panel p-5 space-y-4">
+          <div>
+            <h3 className="text-sm font-bold text-slate-200">Held and uncertain resource locks</h3>
+            <p className="mt-1 text-xs leading-5 text-slate-400">Runs hold declared resources through case cleanup. Locks left uncertain after a service restart require an administrator to review the run and release them with an audit reason.</p>
+          </div>
+          {resourceLocks.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-slate-700 p-4 text-xs text-slate-500">No resource locks are currently held or awaiting review.</p>
+          ) : (
+            <div className="space-y-2">
+              {resourceLocks.map((lock) => (
+                <div key={lock.resource_key} className="grid grid-cols-[1fr_auto_auto] items-center gap-4 rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-mono text-xs font-semibold text-slate-200">{lock.resource_key.split('|').slice(1).join('|')}</p>
+                    <p className="mt-1 truncate text-[10px] font-mono text-slate-500">Run {lock.run_id} · owner {lock.owner_id}</p>
+                    <p className="mt-1 text-[10px] text-slate-500">Lease until {lock.lease_expires_at} · run status {lock.run_status}</p>
+                  </div>
+                  <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${lock.status === 'HELD' ? 'bg-emerald-950/50 text-emerald-300' : 'bg-amber-950/60 text-amber-300'}`}>{lock.status}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleReleaseResourceLock(lock)}
+                    disabled={['QUEUED', 'RUNNING'].includes(lock.run_status)}
+                    className="btn btn-secondary text-xs py-1.5 px-3 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {['QUEUED', 'RUNNING'].includes(lock.run_status) ? 'Run is active' : 'Review & release'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       )}
     </div>
   );

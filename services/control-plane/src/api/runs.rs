@@ -117,6 +117,16 @@ pub async fn trigger_run(
 
     let suite_definition =
         serde_json::from_str::<Value>(&revision.definition_json).unwrap_or(Value::Null);
+    let (resource_locks, lock_wait_timeout_seconds) =
+        match crate::resource_locks::validate_suite_resource_locks(&suite_definition) {
+            Ok(lock_settings) => lock_settings,
+            Err(message) => {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({ "error": message, "code": "RESOURCE_LOCKS_INVALID" })),
+                )
+            }
+        };
     let run_inputs = payload
         .inputs
         .as_ref()
@@ -164,6 +174,8 @@ pub async fn trigger_run(
         "suite_revision_id": payload.suite_revision_id,
         "suite_checksum": revision.checksum,
         "environment_id": payload.environment_id,
+        "resource_locks": resource_locks,
+        "lock_wait_timeout_seconds": lock_wait_timeout_seconds,
         "seed": random_seed,
         "catalog_version": "v1"
     });

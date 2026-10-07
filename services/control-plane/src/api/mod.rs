@@ -5,6 +5,7 @@ pub mod connections;
 pub mod events;
 pub mod health;
 pub mod portability;
+pub mod resource_locks;
 pub mod runs;
 pub mod specifications;
 pub mod variables;
@@ -99,6 +100,14 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/v1/secrets",
             get(connections::list_secrets).post(connections::create_secret),
+        )
+        .route(
+            "/api/v1/resource-locks",
+            get(resource_locks::list_resource_locks),
+        )
+        .route(
+            "/api/v1/resource-locks/release",
+            post(resource_locks::release_resource_lock),
         )
         // OpenAPI Specifications
         .route(

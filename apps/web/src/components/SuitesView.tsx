@@ -63,6 +63,8 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState('');
   const [runInputsText, setRunInputsText] = useState('{}');
   const [inputSchemaText, setInputSchemaText] = useState('{}');
+  const [resourceLocksText, setResourceLocksText] = useState('');
+  const [lockWaitTimeoutText, setLockWaitTimeoutText] = useState('300');
   const [hasInputSchemaContract, setHasInputSchemaContract] = useState(true);
   const [selectedRevisionId, setSelectedRevisionId] = useState('');
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
@@ -145,6 +147,8 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
         setSuiteCases(definition?.cases || []);
         setSuiteVariables(definition?.variables || {});
         setInputSchemaText(JSON.stringify(definition?.input_schema || {}, null, 2));
+        setResourceLocksText((definition?.resource_locks || []).join('\n'));
+        setLockWaitTimeoutText(String(definition?.lock_wait_timeout_seconds ?? 300));
         setHasInputSchemaContract(Object.prototype.hasOwnProperty.call(definition || {}, 'input_schema'));
         setCaseVariables({});
         setNodes([]);
@@ -153,6 +157,8 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
         setSelectedNode(null);
       } else {
         setInputSchemaText('{}');
+        setResourceLocksText('');
+        setLockWaitTimeoutText('300');
         setHasInputSchemaContract(false);
         const parsedNodes = definition?.nodes || [];
         setNodes(parsedNodes);
@@ -227,7 +233,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
     }
     try {
       const saved = await updateAssetDraft(selectedAsset.id, {
-        draft_json: buildDraft(selectedAsset, nodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText, inputSchemaText),
+        draft_json: buildDraft(selectedAsset, nodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText, inputSchemaText, resourceLocksText, lockWaitTimeoutText),
         expected_draft_version: selectedAsset.draft_version,
       });
       setSelectedAsset({ ...selectedAsset, draft_version: saved.draft_version });
@@ -248,7 +254,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
     }
     try {
       const saved = await updateAssetDraft(selectedAsset.id, {
-        draft_json: buildDraft(selectedAsset, nodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText, inputSchemaText),
+        draft_json: buildDraft(selectedAsset, nodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText, inputSchemaText, resourceLocksText, lockWaitTimeoutText),
         expected_draft_version: selectedAsset.draft_version,
       });
       const nextVersion = saved.draft_version as number;
@@ -302,7 +308,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
       let revisionId = selectedRevisionId;
       if (canEdit) {
         const saved = await updateAssetDraft(selectedAsset.id, {
-          draft_json: buildDraft(selectedAsset, nodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText, inputSchemaText),
+          draft_json: buildDraft(selectedAsset, nodes, suiteCases, caseVariables, suiteVariables, datasetFormat, datasetText, inputSchemaText, resourceLocksText, lockWaitTimeoutText),
           expected_draft_version: selectedAsset.draft_version,
         });
         const nextVersion = saved.draft_version as number;
@@ -626,6 +632,31 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
                 onCommit={setSuiteVariables}
                 onValidationChange={setVariableEditorError}
               />}
+              <div className="grid grid-cols-[1fr_180px] gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+                <label className="block text-xs font-semibold text-slate-300">Exclusive resource locks (one per line)
+                  <textarea
+                    rows={3}
+                    value={resourceLocksText}
+                    disabled={!canEdit}
+                    onChange={(event) => setResourceLocksText(event.target.value)}
+                    className="input-field mt-2 resize-y font-mono text-[11px] disabled:opacity-70"
+                    placeholder={'env:staging\ntenant:demo-account'}
+                  />
+                  <span className="mt-1 block text-[10px] font-normal text-slate-500">Names are exclusive within this workspace (case-insensitive) and stay held until the run finishes cleanup.</span>
+                </label>
+                <label className="block text-xs font-semibold text-slate-300">Lock wait limit (seconds)
+                  <input
+                    type="number"
+                    min={1}
+                    max={3600}
+                    value={lockWaitTimeoutText}
+                    disabled={!canEdit}
+                    onChange={(event) => setLockWaitTimeoutText(event.target.value)}
+                    className="input-field mt-2 text-xs font-mono disabled:opacity-70"
+                  />
+                  <span className="mt-1 block text-[10px] font-normal text-slate-500">A run that cannot acquire its locks before this deadline ends with ERROR.</span>
+                </label>
+              </div>
               <label className="block rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs font-semibold text-slate-300">Declared run inputs (JSON object)
                 <textarea rows={5} value={inputSchemaText} disabled={!canEdit} onChange={(event) => { setInputSchemaText(event.target.value); setHasInputSchemaContract(true); }} className="input-field mt-2 resize-y font-mono text-[11px] disabled:opacity-70" placeholder={'{\n  "customer_id": { "type": "integer", "required": true }\n}'} />
                 <span className="mt-1 block text-[10px] font-normal text-slate-500">Declare input name, type, and required flag. Undeclared or mismatched values are rejected before a run starts.</span>
@@ -962,6 +993,8 @@ function buildDraft(
   datasetFormat: 'json' | 'csv',
   datasetText: string,
   inputSchemaText: string,
+  resourceLocksText: string,
+  lockWaitTimeoutText: string,
 ) {
   if (asset.kind === 'suite') {
     const inputSchema = parseRunInputSchema(inputSchemaText);
@@ -971,6 +1004,8 @@ function buildDraft(
       execution_mode: 'sequential',
       variables: suiteVariables,
       input_schema: inputSchema,
+      resource_locks: parseResourceLocks(resourceLocksText),
+      lock_wait_timeout_seconds: parseLockWaitTimeout(lockWaitTimeoutText),
       cases: suiteCases.map((item, ordinal) => ({ ...item, ordinal })),
     };
   }
@@ -1002,6 +1037,29 @@ function buildDraft(
       target: node.id,
     })),
   };
+}
+
+function parseResourceLocks(text: string): string[] {
+  const names = text.split(/\r?\n/).map((name) => name.trim()).filter(Boolean);
+  if (names.length > 32) throw new Error('A suite can declare at most 32 resource locks.');
+  const seen = new Set<string>();
+  for (const name of names) {
+    if (name.length > 128 || !/^[A-Za-z0-9_.:-]+$/.test(name)) {
+      throw new Error('Resource lock names may contain letters, digits, underscores, hyphens, periods, and colons.');
+    }
+    const normalized = name.toLowerCase();
+    if (seen.has(normalized)) throw new Error('Resource lock names must be unique.');
+    seen.add(normalized);
+  }
+  return names;
+}
+
+function parseLockWaitTimeout(text: string): number {
+  const value = Number(text);
+  if (!Number.isInteger(value) || value < 1 || value > 3600) {
+    throw new Error('Lock wait limit must be a whole number from 1 to 3600 seconds.');
+  }
+  return value;
 }
 
 function parseRunInputs(value: string): Record<string, unknown> {

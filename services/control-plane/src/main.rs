@@ -4,6 +4,7 @@ mod crypto;
 mod db;
 mod models;
 mod orchestrator;
+mod resource_locks;
 mod variables;
 
 use axum::http::{header, HeaderName, HeaderValue, Method};

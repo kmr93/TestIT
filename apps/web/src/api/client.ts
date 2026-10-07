@@ -115,6 +115,9 @@ export const testConnection = (id: string) => apiRequest<any>(`/connections/${id
 export const getSecrets = () => apiRequest<any[]>('/secrets');
 export const createSecret = (data: { name: string; plaintext: string }) =>
   apiRequest<any>('/secrets', { method: 'POST', body: JSON.stringify(data) });
+export const getResourceLocks = () => apiRequest<any[]>('/resource-locks');
+export const releaseResourceLock = (data: { resource_key: string; reason: string }) =>
+  apiRequest<any>('/resource-locks/release', { method: 'POST', body: JSON.stringify(data) });
 
 // OpenAPI
 export const validateOpenApi = (spec_content: string) =>

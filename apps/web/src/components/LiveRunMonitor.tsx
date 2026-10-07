@@ -56,7 +56,7 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose, 
         setEvents((prev) => [...prev.slice(-99), { type, data }]);
       } catch (_) {}
     };
-    ['run.started', 'run.planned', 'case.started', 'case.finished', 'step.started', 'step.finished']
+    ['run.started', 'run.waiting_for_resource', 'run.planned', 'case.started', 'case.finished', 'step.started', 'step.finished']
       .forEach((type) => sse.addEventListener(type, trackEvent(type)));
 
     sse.addEventListener('run.finished', (e: MessageEvent) => {
@@ -93,6 +93,7 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose, 
   };
 
   const snapshotPercent = snapshot?.progress?.percent;
+  const waitingResources: string[] = snapshot?.stats?.waiting_for_resources || [];
   const percent = Number.isFinite(snapshotPercent)
     ? Math.max(0, Math.min(100, Number(snapshotPercent)))
     : status === 'PASSED'
@@ -122,7 +123,7 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose, 
         </div>
 
         <div className="flex items-center gap-2">
-          {canCancel && status === 'RUNNING' && (
+          {canCancel && ['QUEUED', 'RUNNING'].includes(status) && (
             <button onClick={handleCancel} className="btn btn-danger text-xs py-1.5 px-3">
               <Ban className="w-3.5 h-3.5" />
               Cancel Run
@@ -161,6 +162,14 @@ export const LiveRunMonitor: React.FC<LiveRunMonitorProps> = ({ runId, onClose, 
           </button>
         </div>
       </div>
+
+      {status === 'QUEUED' && waitingResources.length > 0 && (
+        <div className="rounded-lg border border-amber-900/70 bg-amber-950/30 px-4 py-3 text-xs text-amber-200">
+          <p className="font-semibold">Waiting for exclusive resources</p>
+          <p className="mt-1">Another run currently holds: <span className="font-mono">{waitingResources.join(', ')}</span></p>
+          {snapshot?.stats?.lock_wait_timeout_seconds && <p className="mt-1 text-amber-300/80">This run will time out after {snapshot.stats.lock_wait_timeout_seconds} seconds.</p>}
+        </div>
+      )}
 
       {monitorError && <div role="alert" className="rounded-lg border border-rose-800 bg-rose-950/50 px-3 py-2 text-xs text-rose-200">{monitorError}</div>}
 

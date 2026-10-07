@@ -1,14 +1,14 @@
-use chrono::Utc;
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::Semaphore;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
-    models::{AssetRevision, CaseRunRecord, NatsEventOutboxRecord, StepRunRecord, SuiteRunRecord},
+    models::{AssetRevision, NatsEventOutboxRecord, SuiteRunRecord},
     variables::{resolve_variable_definitions, ResolutionContext, VariableResolver},
     AppState,
 };
@@ -16,6 +16,28 @@ use crate::{
 pub struct Orchestrator {
     state: AppState,
     semaphore: Arc<Semaphore>,
+    active_runs: Arc<Mutex<HashSet<String>>>,
+}
+
+struct ActiveRunGuard {
+    active_runs: Arc<Mutex<HashSet<String>>>,
+    run_id: String,
+}
+
+impl Drop for ActiveRunGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active_runs) = self.active_runs.lock() {
+            active_runs.remove(&self.run_id);
+        }
+    }
+}
+
+struct ResourceLockHeartbeat(tokio::task::JoinHandle<()>);
+
+impl Drop for ResourceLockHeartbeat {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 fn collect_secret_references(value: &Value, references: &mut HashSet<String>) {
@@ -72,6 +94,7 @@ impl Orchestrator {
         Self {
             state,
             semaphore: Arc::new(Semaphore::new(max_cases)),
+            active_runs: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -79,8 +102,8 @@ impl Orchestrator {
     /// These runs are not resumed because the external side effects of a node
     /// cannot be safely replayed without an idempotency contract.
     pub async fn recover_interrupted_runs(state: &AppState) -> Result<(), anyhow::Error> {
-        let active_runs = sqlx::query_as::<_, (String, String)>(
-            "SELECT id, workspace_id FROM suite_runs WHERE status = 'RUNNING' ORDER BY created_at",
+        let active_runs = sqlx::query_as::<_, (String, String, Option<String>)>(
+            "SELECT id, workspace_id, initiating_user_id FROM suite_runs WHERE status = 'RUNNING' ORDER BY created_at",
         )
         .fetch_all(&state.db)
         .await?;
@@ -88,7 +111,7 @@ impl Orchestrator {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()?;
-        for (run_id, workspace_id) in active_runs {
+        for (run_id, workspace_id, actor_id) in active_runs {
             if let (Some(url), Some(token)) = (
                 state.config.worker_manager_url.as_deref(),
                 state.config.worker_manager_token.as_deref(),
@@ -140,6 +163,31 @@ impl Orchestrator {
             .bind(&run_id)
             .execute(&mut *tx)
             .await?;
+            sqlx::query(
+                "UPDATE resource_locks SET status = 'UNCERTAIN' WHERE run_id = ? AND status = 'HELD'",
+            )
+            .bind(&run_id)
+            .execute(&mut *tx)
+            .await?;
+            let uncertain_keys = sqlx::query_scalar::<_, String>(
+                "SELECT resource_key FROM resource_locks WHERE run_id = ? AND status = 'UNCERTAIN'",
+            )
+            .bind(&run_id)
+            .fetch_all(&mut *tx)
+            .await?;
+            if !uncertain_keys.is_empty() {
+                sqlx::query(
+                    "INSERT INTO audit_events (id, actor_id, action, target_type, target_id, changes_json, created_at)
+                     VALUES (?, ?, 'resource_lock.uncertain', 'suite_run', ?, ?, ?)",
+                )
+                .bind(Uuid::new_v4().to_string())
+                .bind(actor_id.as_deref())
+                .bind(&run_id)
+                .bind(json!({ "resource_keys": uncertain_keys, "reason": "control_plane_restart" }).to_string())
+                .bind(&now)
+                .execute(&mut *tx)
+                .await?;
+            }
 
             let sequence: i64 = sqlx::query_scalar(
                 "SELECT COALESCE(MAX(sequence), 0) + 1 FROM run_events WHERE suite_run_id = ?",
@@ -205,19 +253,278 @@ impl Orchestrator {
         loop {
             interval.tick().await;
 
-            // Find next queued run
-            let queued_run = sqlx::query_as::<_, SuiteRunRecord>(
-                "SELECT * FROM suite_runs WHERE status = 'QUEUED' ORDER BY created_at ASC LIMIT 1",
+            let queued_runs = sqlx::query_as::<_, SuiteRunRecord>(
+                "SELECT * FROM suite_runs WHERE status = 'QUEUED' ORDER BY created_at ASC LIMIT 200",
             )
-            .fetch_optional(&self.state.db)
+            .fetch_all(&self.state.db)
             .await;
-
-            if let Ok(Some(run)) = queued_run {
-                let this = self.clone();
-                tokio::spawn(async move {
-                    this.execute_suite_run(run).await;
-                });
+            let Ok(queued_runs) = queued_runs else {
+                continue;
+            };
+            for run in queued_runs {
+                let run_id = run.id.clone();
+                let should_schedule = if let Ok(mut active) = self.active_runs.lock() {
+                    active.len() < 64 && active.insert(run_id.clone())
+                } else {
+                    false
+                };
+                if should_schedule {
+                    let this = self.clone();
+                    let active_runs = self.active_runs.clone();
+                    tokio::spawn(async move {
+                        let _guard = ActiveRunGuard {
+                            active_runs,
+                            run_id,
+                        };
+                        this.execute_suite_run(run).await;
+                    });
+                }
             }
+        }
+    }
+
+    async fn try_claim_run(
+        &self,
+        run: &SuiteRunRecord,
+        resource_keys: &[String],
+        started_at: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let mut tx = self.state.db.begin().await?;
+        for resource_key in resource_keys {
+            let existing = sqlx::query_as::<_, (String, String, Option<String>, String, i64)>(
+                "SELECT locks.run_id, locks.status, holder.status, locks.owner,
+                        CASE WHEN julianday(locks.lease_expires_at) <= julianday('now') THEN 1 ELSE 0 END
+                 FROM resource_locks locks
+                 LEFT JOIN suite_runs holder ON holder.id = locks.run_id
+                 WHERE locks.resource_key = ?",
+            )
+            .bind(resource_key)
+            .fetch_optional(&mut *tx)
+            .await?;
+            let Some((holder_run_id, status, holder_status, owner_id, lease_expired)) = existing
+            else {
+                continue;
+            };
+            if holder_run_id == run.id && status == "HELD" {
+                continue;
+            }
+            if matches!(status.as_str(), "EXPIRED" | "UNCERTAIN") {
+                tx.rollback().await?;
+                return Ok(false);
+            }
+            if holder_status
+                .as_deref()
+                .is_none_or(|holder_status| !matches!(holder_status, "QUEUED" | "RUNNING"))
+            {
+                sqlx::query(
+                    "INSERT INTO audit_events (id, actor_id, action, target_type, target_id, changes_json, created_at)
+                     VALUES (?, ?, 'resource_lock.release_recovered', 'resource_lock', ?, ?, ?)",
+                )
+                .bind(Uuid::new_v4().to_string())
+                .bind((owner_id != "system").then_some(owner_id.as_str()))
+                .bind(resource_key)
+                .bind(json!({ "run_id": holder_run_id, "reason": "holder_run_terminal" }).to_string())
+                .bind(Utc::now().to_rfc3339())
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query("DELETE FROM resource_locks WHERE resource_key = ? AND run_id = ?")
+                    .bind(resource_key)
+                    .bind(holder_run_id)
+                    .execute(&mut *tx)
+                    .await?;
+                continue;
+            }
+            if lease_expired == 1 && status == "HELD" {
+                sqlx::query(
+                    "UPDATE resource_locks SET status = 'UNCERTAIN' WHERE resource_key = ? AND run_id = ? AND status = 'HELD'",
+                )
+                .bind(resource_key)
+                .bind(&holder_run_id)
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query(
+                    "INSERT INTO audit_events (id, actor_id, action, target_type, target_id, changes_json, created_at)
+                     VALUES (?, ?, 'resource_lock.uncertain', 'resource_lock', ?, ?, ?)",
+                )
+                .bind(Uuid::new_v4().to_string())
+                .bind((owner_id != "system").then_some(owner_id.as_str()))
+                .bind(resource_key)
+                .bind(json!({ "run_id": holder_run_id, "reason": "lease_expired_while_run_active" }).to_string())
+                .bind(Utc::now().to_rfc3339())
+                .execute(&mut *tx)
+                .await?;
+            }
+            tx.commit().await?;
+            return Ok(false);
+        }
+
+        for resource_key in resource_keys {
+            let inserted = sqlx::query(
+                "INSERT INTO resource_locks (resource_key, run_id, owner, lease_expires_at, status)
+                 VALUES (?, ?, ?, datetime('now', '+45 seconds'), 'HELD')
+                 ON CONFLICT(resource_key) DO UPDATE
+                 SET lease_expires_at = excluded.lease_expires_at
+                 WHERE resource_locks.run_id = excluded.run_id AND resource_locks.status = 'HELD'",
+            )
+            .bind(resource_key)
+            .bind(&run.id)
+            .bind(run.initiating_user_id.as_deref().unwrap_or("system"))
+            .execute(&mut *tx)
+            .await?;
+            if inserted.rows_affected() != 1 {
+                tx.rollback().await?;
+                return Ok(false);
+            }
+        }
+        let claimed = sqlx::query(
+            "UPDATE suite_runs SET status = 'RUNNING', started_at = ? WHERE id = ? AND status = 'QUEUED'",
+        )
+        .bind(started_at)
+        .bind(&run.id)
+        .execute(&mut *tx)
+        .await?;
+        if claimed.rows_affected() != 1 {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    async fn update_resource_wait_snapshot(
+        &self,
+        run_id: &str,
+        resource_names: &[String],
+        timeout_seconds: i64,
+    ) -> DateTime<Utc> {
+        let stored = sqlx::query_scalar::<_, String>(
+            "SELECT stats_json FROM run_progress_snapshots WHERE suite_run_id = ?",
+        )
+        .bind(run_id)
+        .fetch_optional(&self.state.db)
+        .await
+        .ok()
+        .flatten();
+        let mut stats = stored
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .filter(Value::is_object)
+            .unwrap_or_else(|| json!({}));
+        let waiting_since = stats
+            .get("lock_wait_started_at")
+            .and_then(Value::as_str)
+            .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
+            .map(|timestamp| timestamp.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now);
+        if let Some(object) = stats.as_object_mut() {
+            object.insert("waiting_for_resources".to_string(), json!(resource_names));
+            object.insert(
+                "lock_wait_timeout_seconds".to_string(),
+                json!(timeout_seconds),
+            );
+            object.insert(
+                "lock_wait_started_at".to_string(),
+                json!(waiting_since.to_rfc3339()),
+            );
+        }
+        let now = Utc::now().to_rfc3339();
+        let _ = sqlx::query(
+            "UPDATE run_progress_snapshots SET stats_json = ?, updated_at = ? WHERE suite_run_id = ? AND status = 'QUEUED'",
+        )
+        .bind(stats.to_string())
+        .bind(now)
+        .bind(run_id)
+        .execute(&self.state.db)
+        .await;
+        waiting_since
+    }
+
+    fn start_resource_lock_heartbeat(&self, run_id: String) -> ResourceLockHeartbeat {
+        let db = self.state.db.clone();
+        ResourceLockHeartbeat(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(10));
+            loop {
+                interval.tick().await;
+                match sqlx::query(
+                    "UPDATE resource_locks SET lease_expires_at = datetime('now', '+45 seconds')
+                     WHERE run_id = ? AND status = 'HELD'",
+                )
+                .bind(&run_id)
+                .execute(&db)
+                .await
+                {
+                    Ok(result) if result.rows_affected() == 0 => break,
+                    Ok(_) => {}
+                    Err(error) => warn!(
+                        "Could not refresh resource-lock lease for {}: {}",
+                        run_id, error
+                    ),
+                }
+            }
+        }))
+    }
+
+    async fn release_resource_locks(&self, run_id: &str) {
+        let mut tx = match self.state.db.begin().await {
+            Ok(tx) => tx,
+            Err(error) => {
+                warn!(
+                    "Could not begin resource-lock release for {}: {}",
+                    run_id, error
+                );
+                return;
+            }
+        };
+        let locks = match sqlx::query_as::<_, (String, String)>(
+            "SELECT resource_key, owner FROM resource_locks WHERE run_id = ? AND status = 'HELD'",
+        )
+        .bind(run_id)
+        .fetch_all(&mut *tx)
+        .await
+        {
+            Ok(locks) => locks,
+            Err(error) => {
+                let _ = tx.rollback().await;
+                warn!("Could not read resource locks for {}: {}", run_id, error);
+                return;
+            }
+        };
+        let now = Utc::now().to_rfc3339();
+        for (resource_key, owner_id) in &locks {
+            let audit = sqlx::query(
+                "INSERT INTO audit_events (id, actor_id, action, target_type, target_id, changes_json, created_at)
+                 VALUES (?, ?, 'resource_lock.release', 'resource_lock', ?, ?, ?)",
+            )
+            .bind(Uuid::new_v4().to_string())
+            .bind((owner_id != "system").then_some(owner_id.as_str()))
+            .bind(resource_key)
+            .bind(json!({ "run_id": run_id, "reason": "run_finished" }).to_string())
+            .bind(&now)
+            .execute(&mut *tx)
+            .await;
+            if let Err(error) = audit {
+                let _ = tx.rollback().await;
+                warn!(
+                    "Could not audit resource-lock release for {}: {}",
+                    run_id, error
+                );
+                return;
+            }
+        }
+        if let Err(error) =
+            sqlx::query("DELETE FROM resource_locks WHERE run_id = ? AND status = 'HELD'")
+                .bind(run_id)
+                .execute(&mut *tx)
+                .await
+        {
+            let _ = tx.rollback().await;
+            warn!("Could not release resource locks for {}: {}", run_id, error);
+            return;
+        }
+        if let Err(error) = tx.commit().await {
+            warn!(
+                "Could not commit resource-lock release for {}: {}",
+                run_id, error
+            );
         }
     }
 
@@ -274,23 +581,109 @@ impl Orchestrator {
     /// Execute a full suite run
     async fn execute_suite_run(&self, run: SuiteRunRecord) {
         let run_id = run.id.clone();
-        let now = Utc::now().to_rfc3339();
-
+        let rev = sqlx::query_as::<_, AssetRevision>("SELECT * FROM asset_revisions WHERE id = ?")
+            .bind(&run.suite_revision_id)
+            .fetch_optional(&self.state.db)
+            .await;
+        let suite_def: Value = match rev {
+            Ok(Some(revision)) => match serde_json::from_str(&revision.definition_json) {
+                Ok(definition) => definition,
+                Err(_) => {
+                    self.fail_run(&run_id, "Suite revision contains invalid definition data")
+                        .await;
+                    return;
+                }
+            },
+            _ => {
+                self.fail_run(&run_id, "Suite definition revision could not be loaded")
+                    .await;
+                return;
+            }
+        };
+        let (resource_names, lock_timeout_seconds) =
+            match crate::resource_locks::validate_suite_resource_locks(&suite_def) {
+                Ok(settings) => settings,
+                Err(message) => {
+                    self.fail_run(&run_id, &message).await;
+                    return;
+                }
+            };
+        let resource_keys = resource_names
+            .iter()
+            .map(|name| format!("{}|{}", run.workspace_id, name.to_ascii_lowercase()))
+            .collect::<Vec<_>>();
+        let mut wait_started = None;
+        let mut waiting_event_sent = false;
+        let now = loop {
+            if !self.run_is_queued(&run_id).await {
+                return;
+            }
+            match self
+                .try_claim_run(&run, &resource_keys, &Utc::now().to_rfc3339())
+                .await
+            {
+                Ok(true) => break Utc::now().to_rfc3339(),
+                Ok(false) => {}
+                Err(error) => {
+                    warn!(
+                        "Could not claim run {} or its resource locks: {}",
+                        run_id, error
+                    );
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            }
+            let wait_started_at = match wait_started {
+                Some(timestamp) => timestamp,
+                None => {
+                    let timestamp = self
+                        .update_resource_wait_snapshot(
+                            &run_id,
+                            &resource_names,
+                            lock_timeout_seconds,
+                        )
+                        .await;
+                    wait_started = Some(timestamp);
+                    timestamp
+                }
+            };
+            let lock_deadline = wait_started_at + ChronoDuration::seconds(lock_timeout_seconds);
+            if Utc::now() >= lock_deadline {
+                self.fail_run(
+                    &run_id,
+                    &format!(
+                        "Timed out after {} seconds waiting for resource locks: {}",
+                        lock_timeout_seconds,
+                        resource_names.join(", ")
+                    ),
+                )
+                .await;
+                return;
+            }
+            if !waiting_event_sent {
+                self.emit_event(
+                    &run_id,
+                    0,
+                    "run.waiting_for_resource",
+                    json!({
+                        "run_id": run_id,
+                        "resources": resource_names,
+                        "timeout_seconds": lock_timeout_seconds
+                    }),
+                )
+                .await;
+                waiting_event_sent = true;
+            }
+            self.update_resource_wait_snapshot(&run_id, &resource_names, lock_timeout_seconds)
+                .await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        };
         info!("Starting execution for SuiteRun {}", run_id);
-
-        // Mark run as RUNNING
-        let claimed = sqlx::query(
-            "UPDATE suite_runs SET status = 'RUNNING', started_at = ? WHERE id = ? AND status = 'QUEUED'",
-        )
-        .bind(&now)
-        .bind(&run_id)
-        .execute(&self.state.db)
-        .await;
-
-        if !matches!(claimed, Ok(result) if result.rows_affected() == 1) {
-            return;
-        }
-
+        let _resource_heartbeat = if resource_keys.is_empty() {
+            None
+        } else {
+            Some(self.start_resource_lock_heartbeat(run_id.clone()))
+        };
         self.emit_event(
             &run_id,
             2,
@@ -298,21 +691,6 @@ impl Orchestrator {
             json!({ "run_id": run_id, "status": "RUNNING" }),
         )
         .await;
-
-        // Fetch suite revision definition
-        let rev = sqlx::query_as::<_, AssetRevision>("SELECT * FROM asset_revisions WHERE id = ?")
-            .bind(&run.suite_revision_id)
-            .fetch_optional(&self.state.db)
-            .await;
-
-        let suite_def: Value = match rev {
-            Ok(Some(r)) => serde_json::from_str(&r.definition_json).unwrap_or(json!({})),
-            _ => {
-                self.fail_run(&run_id, "Suite definition revision could not be loaded")
-                    .await;
-                return;
-            }
-        };
 
         let mut cases = suite_def
             .get("cases")
@@ -669,6 +1047,7 @@ impl Orchestrator {
             .bind(&run_id)
             .execute(&self.state.db)
             .await;
+        self.release_resource_locks(&run_id).await;
 
         let terminal_status =
             sqlx::query_scalar::<_, String>("SELECT status FROM suite_runs WHERE id = ?")
@@ -1251,13 +1630,31 @@ impl Orchestrator {
             .is_some_and(|status| status == "CANCELED")
     }
 
+    async fn run_is_queued(&self, run_id: &str) -> bool {
+        sqlx::query_scalar::<_, String>("SELECT status FROM suite_runs WHERE id = ?")
+            .bind(run_id)
+            .fetch_optional(&self.state.db)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|status| status == "QUEUED")
+    }
+
     async fn fail_run(&self, run_id: &str, reason: &str) {
         let now = Utc::now().to_rfc3339();
-        let _ = sqlx::query("UPDATE suite_runs SET status = 'ERROR', finished_at = ? WHERE id = ?")
+        let transitioned = sqlx::query(
+            "UPDATE suite_runs SET status = 'ERROR', finished_at = ? WHERE id = ? AND status IN ('QUEUED', 'RUNNING')",
+        )
             .bind(&now)
             .bind(run_id)
             .execute(&self.state.db)
-            .await;
+            .await
+            .is_ok_and(|result| result.rows_affected() == 1);
+        self.release_resource_locks(run_id).await;
+
+        if !transitioned {
+            return;
+        }
 
         self.emit_event(
             run_id,
@@ -1509,6 +1906,198 @@ fn json_object_map(text: &str) -> HashMap<String, Value> {
         .unwrap_or_default()
         .into_iter()
         .collect()
+}
+
+#[cfg(test)]
+mod resource_lock_tests {
+    use super::Orchestrator;
+    use crate::{config::AppConfig, models::SuiteRunRecord, AppState};
+    use std::{path::PathBuf, sync::Arc};
+    use uuid::Uuid;
+
+    async fn test_orchestrator() -> (Orchestrator, PathBuf) {
+        let database_path =
+            std::env::temp_dir().join(format!("testit-resource-lock-{}.sqlite", Uuid::new_v4()));
+        let database_url = format!(
+            "sqlite://{}?mode=rwc",
+            database_path.to_string_lossy().replace('\\', "/")
+        );
+        let db = crate::db::init_db(&database_url).await.unwrap();
+        for statement in [
+            "INSERT INTO workspaces (id, name) VALUES ('workspace', 'Test workspace')",
+            "INSERT INTO users (id, workspace_id, email, display_name, role, password_hash) VALUES ('user', 'workspace', 'test@example.test', 'Test User', 'ADMIN', 'hash')",
+            "INSERT INTO environments (id, workspace_id, name, variables_json) VALUES ('environment', 'workspace', 'Test', '{}')",
+            "INSERT INTO assets (id, workspace_id, kind, name, draft_json) VALUES ('suite', 'workspace', 'suite', 'Test suite', '{}')",
+            "INSERT INTO asset_revisions (id, asset_id, version, definition_json, checksum, author_id) VALUES ('suite-revision', 'suite', 1, '{\"cases\":[]}', 'checksum', 'user')",
+        ] {
+            sqlx::query(statement).execute(&db).await.unwrap();
+        }
+        for run_id in ["run-one", "run-two", "run-three", "run-four"] {
+            sqlx::query(
+                "INSERT INTO suite_runs (id, workspace_id, suite_revision_id, environment_id, status, run_manifest_json, random_seed)
+                 VALUES (?, 'workspace', 'suite-revision', 'environment', 'QUEUED', '{}', 7)",
+            )
+            .bind(run_id)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+        let config = AppConfig {
+            port: 8080,
+            database_url,
+            nats_url: "nats://localhost:4222".to_string(),
+            master_key: [7u8; 32],
+            artifacts_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+            docker_worker_image: "test-worker".to_string(),
+            max_active_cases: 2,
+            bootstrap_admin_email: None,
+            bootstrap_admin_password: None,
+            cookie_secure: true,
+            cors_allowed_origins: Vec::new(),
+            worker_manager_url: None,
+            worker_manager_token: None,
+        };
+        (
+            Orchestrator::new(AppState {
+                config: Arc::new(config),
+                db,
+                nats: None,
+            }),
+            database_path,
+        )
+    }
+
+    async fn load_run(orchestrator: &Orchestrator, id: &str) -> SuiteRunRecord {
+        sqlx::query_as::<_, SuiteRunRecord>("SELECT * FROM suite_runs WHERE id = ?")
+            .bind(id)
+            .fetch_one(&orchestrator.state.db)
+            .await
+            .unwrap()
+    }
+
+    async fn cleanup(orchestrator: Orchestrator, database_path: PathBuf) {
+        orchestrator.state.db.close().await;
+        let _ = tokio::fs::remove_file(&database_path).await;
+        let _ = tokio::fs::remove_file(database_path.with_extension("sqlite-wal")).await;
+        let _ = tokio::fs::remove_file(database_path.with_extension("sqlite-shm")).await;
+    }
+
+    #[tokio::test]
+    async fn resource_locks_serialize_matching_names_and_release_after_terminal_runs() {
+        let (orchestrator, database_path) = test_orchestrator().await;
+        let first = load_run(&orchestrator, "run-one").await;
+        let second = load_run(&orchestrator, "run-two").await;
+        let third = load_run(&orchestrator, "run-three").await;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        assert!(orchestrator
+            .try_claim_run(&first, &["workspace|tenant:shared".to_string()], &now)
+            .await
+            .unwrap());
+        assert!(!orchestrator
+            .try_claim_run(&second, &["workspace|tenant:shared".to_string()], &now)
+            .await
+            .unwrap());
+        assert!(orchestrator
+            .try_claim_run(&third, &["workspace|tenant:other".to_string()], &now)
+            .await
+            .unwrap());
+
+        sqlx::query("UPDATE suite_runs SET status = 'PASSED' WHERE id = 'run-one'")
+            .execute(&orchestrator.state.db)
+            .await
+            .unwrap();
+        assert!(orchestrator
+            .try_claim_run(&second, &["workspace|tenant:shared".to_string()], &now)
+            .await
+            .unwrap());
+        let recovered_release_audit: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM audit_events WHERE action = 'resource_lock.release_recovered' AND target_id = 'workspace|tenant:shared'",
+        )
+        .fetch_one(&orchestrator.state.db)
+        .await
+        .unwrap();
+        assert_eq!(recovered_release_audit, 1);
+
+        sqlx::query("UPDATE suite_runs SET status = 'PASSED' WHERE id = 'run-two'")
+            .execute(&orchestrator.state.db)
+            .await
+            .unwrap();
+        orchestrator.release_resource_locks("run-two").await;
+        let remaining: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM resource_locks WHERE run_id = 'run-two'")
+                .fetch_one(&orchestrator.state.db)
+                .await
+                .unwrap();
+        assert_eq!(remaining, 0);
+        let release_audits: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM audit_events WHERE action = 'resource_lock.release' AND target_id = 'workspace|tenant:shared'",
+        )
+        .fetch_one(&orchestrator.state.db)
+        .await
+        .unwrap();
+        assert_eq!(release_audits, 1);
+        cleanup(orchestrator, database_path).await;
+    }
+
+    #[tokio::test]
+    async fn expired_lease_becomes_uncertain_instead_of_being_stolen() {
+        let (orchestrator, database_path) = test_orchestrator().await;
+        let first = load_run(&orchestrator, "run-one").await;
+        let second = load_run(&orchestrator, "run-two").await;
+        let now = chrono::Utc::now().to_rfc3339();
+        let key = "workspace|account:shared".to_string();
+
+        assert!(orchestrator
+            .try_claim_run(&first, std::slice::from_ref(&key), &now)
+            .await
+            .unwrap());
+        sqlx::query(
+            "UPDATE resource_locks SET lease_expires_at = '2000-01-01 00:00:00' WHERE resource_key = ?",
+        )
+        .bind(&key)
+        .execute(&orchestrator.state.db)
+        .await
+        .unwrap();
+        assert!(!orchestrator
+            .try_claim_run(&second, std::slice::from_ref(&key), &now)
+            .await
+            .unwrap());
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM resource_locks WHERE resource_key = ?")
+                .bind(&key)
+                .fetch_one(&orchestrator.state.db)
+                .await
+                .unwrap();
+        assert_eq!(status, "UNCERTAIN");
+        assert!(!orchestrator
+            .try_claim_run(&second, std::slice::from_ref(&key), &now)
+            .await
+            .unwrap());
+        cleanup(orchestrator, database_path).await;
+    }
+
+    #[tokio::test]
+    async fn a_lock_wait_failure_does_not_overwrite_a_cancellation() {
+        let (orchestrator, database_path) = test_orchestrator().await;
+        sqlx::query("UPDATE suite_runs SET status = 'CANCELED' WHERE id = 'run-one'")
+            .execute(&orchestrator.state.db)
+            .await
+            .unwrap();
+        assert!(!orchestrator.run_is_queued("run-one").await);
+
+        orchestrator
+            .fail_run("run-one", "resource lock wait timed out")
+            .await;
+
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM suite_runs WHERE id = 'run-one'")
+                .fetch_one(&orchestrator.state.db)
+                .await
+                .unwrap();
+        assert_eq!(status, "CANCELED");
+        cleanup(orchestrator, database_path).await;
+    }
 }
 
 pub(crate) fn case_dataset_rows(case_def: &Value) -> Result<Vec<Value>, String> {

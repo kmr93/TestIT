@@ -10,8 +10,9 @@
 - Added archive bounds and path checks, ZIP CRC checks, manifest and SHA-256 validation, revision/dependency/workflow validation, conflict preview, ID remapping, atomic merge-as-new import, and audit records for successful export/import.
 - Added desktop author controls to download a bundle, preview an upload, review name conflicts and credential re-entry, and apply the import.
 - Added audited connection-profile editing so an administrator can bind locally encrypted secret names to imported profiles without exposing secret plaintext.
+- Added case-insensitive, workspace-scoped suite resource locks. Conflicting runs remain queued with visible wait state and a bounded deadline; renewable leases protect active runs, and expired or restart-interrupted leases become uncertain for audited administrator recovery.
 - Bundles do not include run history, reports/artifacts, scripts, or a SQLite snapshot. The importer currently accepts the uncompressed ZIP format produced by this application; external deflated ZIPs are not accepted.
-- Current verification for this pass: `cargo fmt --all`, `cargo check --workspace --locked`, `npm run build`, and `git diff --check` passed. Full tests and Docker/Compose/browser execution were not run.
+- Current verification for this pass: `cargo fmt --all`, `cargo check --workspace --locked`, `cargo check --tests --workspace --locked`, `npm run build`, and `git diff --check` passed. The targeted resource-lock test build did not reach execution; Docker/Compose/browser execution were not run.
 
 ## Implemented in the current tree
 
@@ -30,7 +31,7 @@
 ### Workflow behavior
 
 - Conditional branches and reusable case calls are absent. The visual editor is an ordered sequence, and publication rejects unsupported graph routing.
-- Suite-level setup and teardown and environment/resource locks are absent. Cleanup support is at case-iteration scope.
+- Suite-level setup and teardown remain absent. Cleanup support is at case-iteration scope.
 - Supported nodes are API request, API/MySQL/MongoDB wait-until, MySQL read, MongoDB read, bounded tabular count, and sleep. Cassandra and approved-script execution are not available in the publishable runtime.
 - Tabular checks, complete response extraction/assertions, declared case input contracts for reusable calls, full static type inference across every workflow field, and SecretRef variable types do not cover the design's complete contract.
 
@@ -49,7 +50,8 @@
 
 - `cargo fmt --all`: passed.
 - `cargo check --workspace --locked`: passed after fixing a compile error in phase execution. Existing warnings remain.
+- `cargo check --tests --workspace --locked`: passed; this type-checks test targets but does not execute them.
 - `npm run build`: passed.
 - `git diff --check`: passed; Git reported line-ending normalization notices only.
 - `python -m compileall -q workers/python deploy/worker-manager`: passed.
-- Full tests, Compose startup, Docker worker execution, connector integration, and browser walkthrough were not run during this implementation pass.
+- The targeted resource-lock `cargo test` build remained in compilation and was stopped before test execution. Compose startup, Docker worker execution, connector integration, and browser walkthrough were not run during this implementation pass.

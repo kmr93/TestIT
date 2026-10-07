@@ -433,6 +433,12 @@ pub async fn publish_revision(
             );
         }
     } else if asset.kind == "suite" {
+        if let Err(message) = crate::resource_locks::validate_suite_resource_locks(&draft_val) {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": message, "code": "RESOURCE_LOCKS_INVALID" })),
+            );
+        }
         if let Err(message) = crate::variables::validate_input_schema(draft_val.get("input_schema"))
         {
             return (

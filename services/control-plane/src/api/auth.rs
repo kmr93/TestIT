@@ -422,6 +422,7 @@ fn cookie_header(
 #[cfg(test)]
 mod tests {
     use super::{hash_password, role_can_access};
+    use argon2::PasswordVerifier;
     use axum::http::Method;
 
     #[test]
