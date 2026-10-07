@@ -36,9 +36,10 @@ import { InlineAlert } from './InlineAlert';
 interface SuitesViewProps {
   onRunStarted: (runId: string) => void;
   userRole: string;
+  assetRefreshKey?: number;
 }
 
-export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }) => {
+export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole, assetRefreshKey = 0 }) => {
   const canEdit = userRole === 'ADMIN' || userRole === 'AUTHOR';
   const canRun = userRole === 'ADMIN' || userRole === 'RUNNER';
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -83,7 +84,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
     if (canEdit || canRun) {
       getConnections().then(setConnections).catch((err) => setErrorMessage(err instanceof Error ? err.message : 'Unable to load connection profiles.'));
     }
-  }, []);
+  }, [assetRefreshKey]);
 
   const loadAssets = async () => {
     try {
@@ -800,6 +801,10 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
                 <label className="block text-xs font-semibold text-slate-300">Request URL or path
                   <input value={selectedNode.config.url || selectedNode.config.path || ''} onChange={(event) => updateNodeConfig(selectedNode.config.url ? 'url' : 'path', event.target.value)} className="input-field mt-1.5 text-xs font-mono" placeholder="/v1/health or a full URL" />
                 </label>
+                {selectedNode.type === 'api.request' && <>
+                  <ConfigJsonInput label="Path parameters (JSON object)" value={selectedNode.config.path_parameters || {}} onCommit={(value) => updateNodeConfig('path_parameters', value)} />
+                  <ConfigJsonInput label="Query parameters (JSON object)" value={selectedNode.config.query || {}} onCommit={(value) => updateNodeConfig('query', value)} />
+                </>}
                 <label className="block text-xs font-semibold text-slate-300">Expected status
                   <input type="number" min={100} max={599} value={selectedNode.config.expected_status ?? 200} onChange={(event) => updateNodeConfig('expected_status', Number(event.target.value))} className="input-field mt-1.5 text-xs font-mono" />
                 </label>
@@ -819,6 +824,7 @@ export const SuitesView: React.FC<SuitesViewProps> = ({ onRunStarted, userRole }
                   <input type="number" min={1} value={selectedNode.config.max_response_time_ms ?? ''} onChange={(event) => updateNodeConfig('max_response_time_ms', event.target.value ? Number(event.target.value) : undefined)} className="input-field mt-1.5 text-xs font-mono" />
                 </label>
                 {selectedNode.type === 'api.request' && <ConfigJsonInput label="Selected response fields (JSON)" value={selectedNode.config.extract || {}} onCommit={(value) => updateNodeConfig('extract', value)} />}
+                {selectedNode.type === 'api.request' && selectedNode.config.response_schema && <ConfigJsonInput label="Imported OpenAPI response schema" value={selectedNode.config.response_schema} onCommit={(value) => updateNodeConfig('response_schema', value)} />}
               </>}
 
               {selectedNode.type === 'wait.until' && selectedNode.config.target === 'mysql' && <>

@@ -43,6 +43,25 @@ export const OpenApiImportModal: React.FC<OpenApiImportModalProps> = ({
     }
   };
 
+  const handleFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setError('OpenAPI JSON must be 5 MiB or smaller.');
+      event.target.value = '';
+      return;
+    }
+    try {
+      setSpecContent(await file.text());
+      setValidationResult(null);
+      setSelectedOps([]);
+      setError(null);
+    } catch {
+      setError('Unable to read this OpenAPI JSON file.');
+    }
+    event.target.value = '';
+  };
+
   const handleImport = async () => {
     if (selectedOps.length === 0) return;
     setLoading(true);
@@ -81,6 +100,7 @@ export const OpenApiImportModal: React.FC<OpenApiImportModalProps> = ({
             <label className="block text-xs font-semibold text-slate-300 mb-1.5">
               OpenAPI 3.0 / 3.1 JSON Specification
             </label>
+            <input aria-label="Upload OpenAPI JSON file" type="file" accept=".json,application/json" onChange={handleFile} className="mb-2 block w-full text-xs text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-slate-200" />
             <textarea
               value={specContent}
               onChange={(e) => setSpecContent(e.target.value)}
@@ -132,7 +152,7 @@ export const OpenApiImportModal: React.FC<OpenApiImportModalProps> = ({
                       </span>
                       <span className="font-mono text-[11px]">{op.path}</span>
                     </div>
-                    <span className="text-slate-400 text-[11px]">{op.summary}</span>
+                    <span className="text-right text-slate-400 text-[11px]">{op.summary}<span className="block text-[10px] text-slate-500">{op.parameters?.length || 0} params{op.has_response_schema ? ' · response schema' : ''}</span></span>
                   </div>
                 ))}
               </div>
@@ -142,7 +162,7 @@ export const OpenApiImportModal: React.FC<OpenApiImportModalProps> = ({
                 disabled={loading || selectedOps.length === 0}
                 className="btn btn-primary w-full text-xs py-2.5 flex items-center justify-center gap-2"
               >
-                <span>Import {selectedOps.length} Operations as Node Templates</span>
+                <span>Import {selectedOps.length} Operations as Case Drafts</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>

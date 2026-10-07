@@ -13,6 +13,7 @@
 - Added case-insensitive, workspace-scoped suite resource locks. Conflicting runs remain queued with visible wait state and a bounded deadline; renewable leases protect active runs, and expired or restart-interrupted leases become uncertain for audited administrator recovery.
 - Added suite-level setup and cleanup hooks to the suite editor and executor. Setup outputs are available to case iterations; cleanup is attempted after setup or case failure and cancellation. Hooks have their own visible run/report scope, and planned steps that do not start are persisted as skipped.
 - Added Cassandra connection profiles, verified-TLS read-only CQL checks and wait-until polling, with bound parameters, row/output bounds, selected columns, and isolated-worker egress validation.
+- Reworked OpenAPI JSON import to validate bounded 3.0/3.1 documents, reject remote references, retain local parameters and JSON schemas, create editable case drafts instead of orphan templates, preserve the source checksum/version, and audit transactional imports. Imported requests now expose path/query parameters and validate request/response bodies against their schemas.
 - Bundles do not include run history, reports/artifacts, scripts, or a SQLite snapshot. The importer currently accepts the uncompressed ZIP format produced by this application; external deflated ZIPs are not accepted.
 - Current verification for this pass: `cargo fmt --all`, `cargo check --workspace --locked`, `cargo check --tests --workspace --locked`, `npm run build`, and `git diff --check` passed. Rust runtime tests, Docker/Compose execution, and browser interaction were not run.
 
@@ -25,6 +26,7 @@
 - Case-level setup, main, and cleanup phases, plus suite-level setup and cleanup. Setup failure skips main execution; cleanup is attempted after main/setup failure and cancellation. Suite setup outputs are passed into each case iteration, and suite cleanup is attempted after case or setup failure/cancellation. Cleanup errors remain reported and do not overwrite an earlier failed result.
 - A Rust orchestrator that validates and dispatches supported nodes to a separate worker manager, validates result envelopes, persists statuses/outputs/metrics, and observes cancellation. The worker manager creates short-lived isolated containers and enforces configured target hosts and resource/output bounds.
 - API wait-until polling for idempotent GET, HEAD, and OPTIONS requests, with bounded intervals/deadlines and attempt reporting.
+- OpenAPI JSON 3.0/3.1 import from paste or a local file, including editable operation case drafts, common path/query/header parameters, source checksums, local component schemas, and runtime request/response JSON Schema validation.
 - Run-, suite-, case-, iteration-, environment-, and step-scoped variable resolution for the implemented resolver features; previews avoid network execution and mask secret references.
 - Login/session/CSRF/rate-limit/role controls, user administration, encrypted connection secrets, report endpoints, CLI execution, sequenced SQLite event replay, run progress snapshots, outbox publication, and a Prometheus text metrics endpoint.
 
@@ -35,6 +37,7 @@
 - Conditional branches and reusable case calls are absent. The visual editor is an ordered sequence, and publication rejects unsupported graph routing.
 - Suite hooks currently support the same bounded node types as the case runtime, but do not yet offer branches or reusable-case calls.
 - Supported nodes are API request, API/MySQL/Cassandra/MongoDB wait-until, MySQL/Cassandra read checks, MongoDB read, bounded tabular count, and sleep. Cassandra is currently limited to verified-TLS parameterized SELECTs with bounded selected-column outputs. Approved-script execution is not available in the publishable runtime.
+- OpenAPI import supports JSON uploads/paste and local references. YAML, approved-URL retrieval, auth/security scheme mapping, and full OpenAPI parameter styles are not implemented.
 - Tabular checks, complete response extraction/assertions, declared case input contracts for reusable calls, full static type inference across every workflow field, and SecretRef variable types do not cover the design's complete contract.
 
 ### Data, reporting, and operations

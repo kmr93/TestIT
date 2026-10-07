@@ -13,6 +13,7 @@ import { getCurrentUser, logout } from './api/client';
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('suites');
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [assetRefreshKey, setAssetRefreshKey] = useState(0);
   const [showOpenApiModal, setShowOpenApiModal] = useState<boolean>(false);
   const [showPreviewModal, setShowPreviewModal] = useState<boolean>(false);
   const [user, setUser] = useState<any | null>(null);
@@ -59,7 +60,7 @@ export const App: React.FC = () => {
       {/* Main Content Workspace */}
       <main className="flex-1 flex flex-col h-screen overflow-hidden">
         {activeTab === 'suites' && (
-          <SuitesView userRole={user.role} onRunStarted={(runId) => setActiveRunId(runId)} />
+          <SuitesView userRole={user.role} assetRefreshKey={assetRefreshKey} onRunStarted={(runId) => setActiveRunId(runId)} />
         )}
 
         {activeTab === 'runs' && (
@@ -85,6 +86,7 @@ export const App: React.FC = () => {
           onClose={() => setShowOpenApiModal(false)}
           onImportSuccess={() => {
             setActiveTab('suites');
+            setAssetRefreshKey((current) => current + 1);
           }}
         />
       )}

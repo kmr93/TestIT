@@ -1821,23 +1821,27 @@ impl Orchestrator {
             for (key, value) in node_config {
                 settings.insert(key, value);
             }
-            if let (Some(base), Some(path)) = (
-                settings.get("base_url").and_then(Value::as_str),
-                settings.get("path").and_then(Value::as_str),
-            ) {
-                if settings.get("url").is_none() {
-                    settings.insert(
-                        "url".to_string(),
-                        json!(format!(
-                            "{}{}{}",
-                            base.trim_end_matches('/'),
-                            if path.starts_with('/') { "" } else { "/" },
-                            path
-                        )),
-                    );
-                }
-            }
             node_config = settings;
+        }
+
+        // OpenAPI imports can provide their server URL directly on the node and
+        // do not require a saved connection profile. Resolve the same base/path
+        // combination for both imported drafts and profile-backed requests.
+        if let (Some(base), Some(path)) = (
+            node_config.get("base_url").and_then(Value::as_str),
+            node_config.get("path").and_then(Value::as_str),
+        ) {
+            if node_config.get("url").is_none() {
+                node_config.insert(
+                    "url".to_string(),
+                    json!(format!(
+                        "{}{}{}",
+                        base.trim_end_matches('/'),
+                        if path.starts_with('/') { "" } else { "/" },
+                        path
+                    )),
+                );
+            }
         }
 
         let mut resolver = VariableResolver::new(context);

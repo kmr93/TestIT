@@ -12,6 +12,7 @@ pub mod variables;
 
 use crate::AppState;
 use axum::{
+    extract::DefaultBodyLimit,
     middleware,
     routing::{get, patch, post},
     Router,
@@ -112,11 +113,11 @@ pub fn create_router(state: AppState) -> Router {
         // OpenAPI Specifications
         .route(
             "/api/v1/specifications/openapi/validate",
-            post(specifications::validate_openapi),
+            post(specifications::validate_openapi).layer(DefaultBodyLimit::max(11 * 1024 * 1024)),
         )
         .route(
             "/api/v1/specifications/openapi/import",
-            post(specifications::import_openapi),
+            post(specifications::import_openapi).layer(DefaultBodyLimit::max(11 * 1024 * 1024)),
         )
         .merge(portability::routes())
         .layer(middleware::from_fn_with_state(

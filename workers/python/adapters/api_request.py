@@ -1,6 +1,7 @@
 import json
+import re
 import time
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 from typing import Any, Dict, Tuple
 
 
@@ -22,7 +23,39 @@ def execute_api_request(
     method = config.get("method", "GET").upper()
     if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
         return ("ERROR", {"code": "HTTP_METHOD_INVALID", "message": "The HTTP method is not supported", "class": "INTERNAL", "details": {}}, {}, {"duration_ms": 0.0})
+    path_parameters = config.get("path_parameters", {})
+    if not isinstance(path_parameters, dict) or len(path_parameters) > 100:
+        return ("ERROR", {"code": "API_PATH_PARAMETERS_INVALID", "message": "Path parameters must be a bounded object", "class": "INTERNAL", "details": {}}, {}, {"duration_ms": 0.0})
+    for name, value in path_parameters.items():
+        url = url.replace("{" + str(name) + "}", quote(str(value), safe=""))
+    if re.search(r"\{[^{}]+\}", url):
+        return ("ERROR", {"code": "API_PATH_PARAMETER_MISSING", "message": "A required URL path parameter has no configured value", "class": "INTERNAL", "details": {}}, {}, {"duration_ms": 0.0})
+    query = config.get("query", {})
+    if not isinstance(query, dict) or len(query) > 100:
+        return ("ERROR", {"code": "API_QUERY_PARAMETERS_INVALID", "message": "Query parameters must be a bounded object", "class": "INTERNAL", "details": {}}, {}, {"duration_ms": 0.0})
+    if query:
+        parts = urlsplit(url)
+        added_query = urlencode(query, doseq=True)
+        url = urlunsplit((parts.scheme, parts.netloc, parts.path, "&".join(part for part in (parts.query, added_query) if part), parts.fragment))
     headers = dict(config.get("headers", {}))
+    required_parameters = config.get("required_parameters", [])
+    if not isinstance(required_parameters, list) or len(required_parameters) > 100:
+        return ("ERROR", {"code": "API_REQUIRED_PARAMETERS_INVALID", "message": "Required parameter metadata is invalid", "class": "INTERNAL", "details": {}}, {}, {"duration_ms": 0.0})
+    for parameter in required_parameters:
+        if not isinstance(parameter, dict):
+            return ("ERROR", {"code": "API_REQUIRED_PARAMETERS_INVALID", "message": "Required parameter metadata is invalid", "class": "INTERNAL", "details": {}}, {}, {"duration_ms": 0.0})
+        name = str(parameter.get("name", ""))
+        location = parameter.get("in")
+        if location == "path":
+            value = path_parameters.get(name)
+        elif location == "query":
+            value = query.get(name)
+        elif location == "header":
+            value = next((item for header_name, item in headers.items() if str(header_name).lower() == name.lower()), None)
+        else:
+            value = None
+        if value is None or value == "":
+            return ("ERROR", {"code": "API_REQUIRED_PARAMETER_MISSING", "message": "A required OpenAPI request parameter has no value", "class": "INTERNAL", "details": {"location": location}}, {}, {"duration_ms": 0.0})
     body = config.get("body")
     timeout_sec = config.get("timeout_seconds", 30)
     max_response_bytes = min(max(int(config.get("max_response_bytes", 1_048_576)), 1), 2 * 1024 * 1024)
@@ -31,6 +64,19 @@ def execute_api_request(
         request_body = json.dumps(body, separators=(",", ":"))
         if not any(key.lower() == "content-type" for key in headers):
             headers["Content-Type"] = "application/json"
+
+    request_schema = config.get("request_schema")
+    if isinstance(request_schema, dict):
+        is_valid, schema_valid = validate_openapi_schema(
+            body,
+            request_schema,
+            config.get("request_schema_components", {}),
+            str(config.get("openapi_version", "3.0.0")),
+        )
+        if not schema_valid:
+            return ("ERROR", {"code": "REQUEST_SCHEMA_INVALID", "message": "The configured OpenAPI request schema is invalid", "class": "INTERNAL", "details": {}}, {}, {"duration_ms": 0.0})
+        if not is_valid:
+            return ("ASSERTION_FAILED", {"code": "REQUEST_SCHEMA_MISMATCH", "message": "The configured request body does not match the imported OpenAPI schema", "class": "ASSERTION", "details": {}}, {}, {"duration_ms": 0.0})
 
     if any(any(marker in key.lower() for marker in ("authorization", "cookie", "token", "api-key", "api_key", "password", "credential")) for key in headers):
         return ("ERROR", {"code": "INLINE_CREDENTIAL_DISALLOWED", "message": "Credentials must use a secret reference, not inline request headers", "class": "AUTH", "details": {}}, {}, {"duration_ms": 0.0})
@@ -139,6 +185,29 @@ def execute_api_request(
                     {"duration_ms": duration_ms, "status_code": status_code},
                 )
 
+        response_schema = config.get("response_schema")
+        if isinstance(response_schema, dict):
+            is_valid, schema_valid = validate_openapi_schema(
+                resp_body,
+                response_schema,
+                config.get("response_schema_components", {}),
+                str(config.get("openapi_version", "3.0.0")),
+            )
+            if not schema_valid:
+                return (
+                    "ERROR",
+                    {"code": "RESPONSE_SCHEMA_INVALID", "message": "The configured OpenAPI response schema is invalid", "class": "INTERNAL", "details": {}},
+                    {},
+                    {"duration_ms": duration_ms, "status_code": status_code},
+                )
+            if not is_valid:
+                return (
+                    "ASSERTION_FAILED",
+                    {"code": "RESPONSE_SCHEMA_MISMATCH", "message": "The response does not match the imported OpenAPI schema", "class": "ASSERTION", "details": {}},
+                    {"status_code": status_code},
+                    {"duration_ms": duration_ms, "status_code": status_code},
+                )
+
         max_response_time = config.get("max_response_time_ms")
         if max_response_time is not None and duration_ms > float(max_response_time):
             return (
@@ -223,6 +292,24 @@ def evaluate_assertion(assertion: Dict[str, Any], body: Any, headers: Dict[str, 
         except (TypeError, ValueError):
             return False
     return False
+
+
+def validate_openapi_schema(instance: Any, schema: Dict[str, Any], components: Any, version: str) -> Tuple[bool, bool]:
+    try:
+        from jsonschema import validators
+
+        dialect = "https://json-schema.org/draft/2020-12/schema" if version.startswith("3.1.") else "http://json-schema.org/draft-07/schema#"
+        schema_document = {
+            "$schema": dialect,
+            "$ref": "#/properties/instance",
+            "properties": {"instance": schema},
+            "components": {"schemas": components if isinstance(components, dict) else {}},
+        }
+        validator_type = validators.validator_for(schema_document)
+        validator_type.check_schema(schema_document)
+        return next(validator_type(schema_document).iter_errors(instance), None) is None, True
+    except Exception:
+        return False, False
 
 
 def execute_wait_until(
