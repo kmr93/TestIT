@@ -5,6 +5,8 @@ pub struct AppConfig {
     pub port: u16,
     pub database_url: String,
     pub nats_url: String,
+    pub nats_control_user: Option<String>,
+    pub nats_control_password: Option<String>,
     pub master_key: [u8; 32],
     pub artifacts_dir: String,
     pub docker_worker_image: String,
@@ -27,6 +29,23 @@ impl AppConfig {
             .unwrap_or_else(|_| "sqlite://data/db/testit.sqlite?mode=rwc".to_string());
 
         let nats_url = env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
+        let nats_control_user = env::var("NATS_CONTROL_USER")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        let nats_control_password = env::var("NATS_CONTROL_PASSWORD")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        if nats_control_user.is_some() != nats_control_password.is_some() {
+            anyhow::bail!(
+                "NATS_CONTROL_USER and NATS_CONTROL_PASSWORD must be configured together"
+            );
+        }
+        if nats_control_password
+            .as_ref()
+            .is_some_and(|password| password.len() < 32)
+        {
+            anyhow::bail!("NATS_CONTROL_PASSWORD must contain at least 32 characters");
+        }
 
         let master_key_hex = env::var("MASTER_KEY_HEX").map_err(|_| {
             anyhow::anyhow!("MASTER_KEY_HEX must be set to a unique 64-character key")
@@ -85,6 +104,8 @@ impl AppConfig {
             port,
             database_url,
             nats_url,
+            nats_control_user,
+            nats_control_password,
             master_key,
             artifacts_dir,
             docker_worker_image,

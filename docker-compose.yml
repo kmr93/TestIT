@@ -4,6 +4,9 @@ services:
     container_name: testit-nats
     restart: unless-stopped
     command: ["-c", "/etc/nats/nats-server.conf"]
+    environment:
+      - NATS_CONTROL_USER=${NATS_CONTROL_USER:?Set NATS_CONTROL_USER for the private NATS publisher account}
+      - NATS_CONTROL_PASSWORD=${NATS_CONTROL_PASSWORD:?Set NATS_CONTROL_PASSWORD to a unique secret}
     volumes:
       - ./deploy/nats/nats-server.conf:/etc/nats/nats-server.conf:ro
     networks:
@@ -30,6 +33,8 @@ services:
       - PORT=8080
       - DATABASE_URL=sqlite:///data/db/testit.sqlite?mode=rwc
       - NATS_URL=nats://nats:4222
+      - NATS_CONTROL_USER=${NATS_CONTROL_USER:?Set NATS_CONTROL_USER for the private NATS publisher account}
+      - NATS_CONTROL_PASSWORD=${NATS_CONTROL_PASSWORD:?Set NATS_CONTROL_PASSWORD to a unique secret}
       - ARTIFACTS_DIR=/data/artifacts
       - MASTER_KEY_HEX=${MASTER_KEY_HEX:?Set MASTER_KEY_HEX to a unique 64-character hex key before starting TestIT}
       - BOOTSTRAP_ADMIN_EMAIL=${BOOTSTRAP_ADMIN_EMAIL:-}

@@ -2262,6 +2262,8 @@ mod resource_lock_tests {
             port: 8080,
             database_url,
             nats_url: "nats://localhost:4222".to_string(),
+            nats_control_user: None,
+            nats_control_password: None,
             master_key: [7u8; 32],
             artifacts_dir: std::env::temp_dir().to_string_lossy().into_owned(),
             docker_worker_image: "test-worker".to_string(),

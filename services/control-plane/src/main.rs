@@ -47,18 +47,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     seed_bootstrap_data(&db, &config).await?;
 
     // 4. Connect to NATS Core (graceful fallback if offline)
-    let nats_client = match async_nats::connect(&config.nats_url).await {
+    let nats_connection = match (
+        config.nats_control_user.as_ref(),
+        config.nats_control_password.as_ref(),
+    ) {
+        (Some(user), Some(password)) => {
+            async_nats::ConnectOptions::with_user_and_password(user.clone(), password.clone())
+                .connect(&config.nats_url)
+                .await
+        }
+        _ => async_nats::connect(&config.nats_url).await,
+    };
+    let nats_client = match nats_connection {
         Ok(client) => {
-            info!(
-                "Connected to private NATS Core server at {}",
-                config.nats_url
-            );
+            info!("Connected to private NATS Core server");
             Some(client)
         }
         Err(e) => {
             warn!(
-                "NATS server unavailable at {} ({}). Operating in fallback polling mode; durable events remain preserved in SQLite.",
-                config.nats_url, e
+                "NATS server unavailable ({}). Operating in fallback polling mode; durable events remain preserved in SQLite.",
+                e
             );
             None
         }
